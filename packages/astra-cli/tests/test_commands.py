@@ -7,6 +7,7 @@ Uses Typer's CliRunner for isolated invocation.
 from __future__ import annotations
 
 import json
+import os
 import asyncio
 from pathlib import Path
 from typing import AsyncIterator
@@ -25,6 +26,7 @@ runner = CliRunner()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _fake_events(events) -> AsyncIterator:
     for e in events:
         yield e
@@ -39,9 +41,20 @@ def make_fake_engine(events=None):
     return engine
 
 
+def _manual_load(config_path: Path) -> None:
+    """Helper: load config.json into os.environ if not already set."""
+    if not config_path.exists():
+        return
+    cfg = json.loads(config_path.read_text())
+    for key, value in cfg.items():
+        if key not in os.environ:
+            os.environ[key] = value
+
+
 # ---------------------------------------------------------------------------
 # astra run
 # ---------------------------------------------------------------------------
+
 
 class TestRunCommand:
     def test_run_with_task_arg(self):
@@ -77,11 +90,11 @@ class TestRunCommand:
 
         captured = {}
 
-        def fake_build(provider, model):
+        def fake_build(provider, model, base_url=None):
             from astra_cli.commands.run import _build_provider, _build_engine
-            prov = _build_provider(provider, model)
+
+            prov = _build_provider(provider, model, base_url)
             captured["provider"] = prov
-            # Return a minimal mock engine
             return make_fake_engine()
 
         with (
@@ -90,7 +103,6 @@ class TestRunCommand:
         ):
             result = runner.invoke(app, ["run", "--provider", "ollama", "task"])
 
-        # Just verify no crash and exit 0
         assert result.exit_code == 0
 
     def test_run_builds_openai_provider(self):
@@ -113,6 +125,7 @@ class TestRunCommand:
 # ---------------------------------------------------------------------------
 # astra swarm
 # ---------------------------------------------------------------------------
+
 
 class TestSwarmCommand:
     def test_swarm_list(self, tmp_path):
@@ -145,6 +158,7 @@ class TestSwarmCommand:
 # astra memory
 # ---------------------------------------------------------------------------
 
+
 class TestMemoryCommand:
     def test_memory_list_empty(self):
         """astra memory list with StubMemory prints 'No memories stored'."""
@@ -168,6 +182,7 @@ class TestMemoryCommand:
 # ---------------------------------------------------------------------------
 # astra config
 # ---------------------------------------------------------------------------
+
 
 class TestConfigCommand:
     def test_config_set_and_get(self, tmp_path):
@@ -202,8 +217,117 @@ class TestConfigCommand:
 # Unknown command
 # ---------------------------------------------------------------------------
 
+
 class TestUnknownCommand:
     def test_unknown_command_gives_error(self):
         """astra unknown-cmd exits with non-zero and shows error."""
         result = runner.invoke(app, ["unknown-cmd"])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# config loading into env
+# ---------------------------------------------------------------------------
+
+
+class TestConfigLoadingIntoEnv:
+    def test_config_set_then_env_loaded_on_run(self, tmp_path):
+        """astra config set ANTHROPIC_API_KEY → env var is set when run command executes."""
+        config_file = tmp_path / "config.json"
+        with patch("astra_cli.commands.config._CONFIG_PATH", config_file):
+            runner.invoke(app, ["config", "set", "ANTHROPIC_API_KEY", "sk-ant-test"])
+
+        captured_env = {}
+
+        def capture_env(*args, **kwargs):
+            captured_env["ANTHROPIC_API_KEY"] = os.environ.get("ANTHROPIC_API_KEY")
+            return make_fake_engine()
+
+        with (
+            patch(
+                "astra_cli.main._load_config_into_env",
+                side_effect=lambda: _manual_load(config_file),
+            ),
+            patch("astra_cli.commands.run._build_engine", side_effect=capture_env),
+        ):
+            result = runner.invoke(app, ["run", "task"])
+
+        assert result.exit_code == 0
+        assert captured_env.get("ANTHROPIC_API_KEY") == "sk-ant-test"
+
+    def test_config_does_not_override_existing_env_var(self, tmp_path):
+        """Existing env var takes precedence over config.json value."""
+        config_file = tmp_path / "config.json"
+        with patch("astra_cli.commands.config._CONFIG_PATH", config_file):
+            runner.invoke(
+                app, ["config", "set", "ANTHROPIC_API_KEY", "sk-ant-from-config"]
+            )
+
+        original_value = "sk-ant-from-env"
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": original_value}):
+            captured_env = {}
+
+            def capture_env(*args, **kwargs):
+                captured_env["ANTHROPIC_API_KEY"] = os.environ.get("ANTHROPIC_API_KEY")
+                return make_fake_engine()
+
+            with (
+                patch(
+                    "astra_cli.main._load_config_into_env",
+                    side_effect=lambda: _manual_load(config_file),
+                ),
+                patch("astra_cli.commands.run._build_engine", side_effect=capture_env),
+            ):
+                result = runner.invoke(app, ["run", "task"])
+
+            assert result.exit_code == 0
+            assert captured_env.get("ANTHROPIC_API_KEY") == original_value
+
+
+# ---------------------------------------------------------------------------
+# --base-url flag
+# ---------------------------------------------------------------------------
+
+
+class TestBaseUrlFlag:
+    def test_run_base_url_passes_to_openai_provider(self):
+        """run --base-url passes base_url to OpenAIProvider."""
+        from astra_cli.commands.run import _build_provider
+        from astra_node.providers.openai import OpenAIProvider
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            prov = _build_provider(
+                "openai", "gpt-4o", base_url="https://openrouter.ai/api/v1"
+            )
+        assert isinstance(prov, OpenAIProvider)
+        assert prov._client.base_url == "https://openrouter.ai/api/v1/"
+
+    def test_run_provider_openai_with_base_url(self):
+        """run --provider openai --base-url ... builds OpenAIProvider with correct base_url."""
+        from astra_cli.commands.run import _build_provider
+        from astra_node.providers.openai import OpenAIProvider
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            prov = _build_provider(
+                "openai", "my-model", base_url="http://localhost:8080/v1"
+            )
+        assert isinstance(prov, OpenAIProvider)
+        assert prov._client.base_url == "http://localhost:8080/v1/"
+
+    def test_run_base_url_none_uses_default(self):
+        """run --provider openai without --base-url uses default (None)."""
+        from astra_cli.commands.run import _build_provider
+        from astra_node.providers.openai import OpenAIProvider
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            prov = _build_provider("openai", "gpt-4o", base_url=None)
+        assert isinstance(prov, OpenAIProvider)
+
+    def test_run_ollama_base_url_override(self):
+        """run --provider ollama with --base-url overrides default ollama URL."""
+        from astra_cli.commands.run import _build_provider
+        from astra_node.providers.openai import OpenAIProvider
+
+        prov = _build_provider("ollama", "llama3", base_url="http://custom:11434/v1")
+        assert isinstance(prov, OpenAIProvider)
+        assert prov._client.base_url == "http://custom:11434/v1/"

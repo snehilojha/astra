@@ -7,7 +7,9 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(help="Get and set configuration values.")
+app = typer.Typer(
+    help="Get and set configuration values (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY)."
+)
 
 _CONFIG_PATH = Path.home() / ".astra" / "config.json"
 
@@ -25,10 +27,13 @@ def _save_config(cfg: dict) -> None:
 
 @app.command("set")
 def config_set(
-    key: str = typer.Argument(..., help="Config key (e.g. ANTHROPIC_API_KEY)."),
+    key: str = typer.Argument(
+        ...,
+        help="Config key (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY).",
+    ),
     value: str = typer.Argument(..., help="Value to store."),
 ) -> None:
-    """Store a configuration value."""
+    """Store a configuration value (API keys are loaded into env vars at startup)."""
     cfg = _load_config()
     cfg[key] = value
     _save_config(cfg)

@@ -1,0 +1,38 @@
+name: ml_pipeline
+strategy: pipeline
+workers:
+  - id: data_validator
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, bash, grep]
+    system_prompt: |
+      You validate dataset integrity. Check for missing values, class imbalance,
+      duplicate rows, schema violations, and outliers. Output a summary of issues
+      found and whether the dataset is safe to proceed.
+    max_turns: 10
+  - id: feature_engineer
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, bash]
+    system_prompt: |
+      Given a dataset validation report, analyse the features and suggest
+      engineering steps: normalization, encoding, feature crosses, dropping
+      low-variance features. Output concrete recommendations.
+    max_turns: 10
+  - id: experiment_runner
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, bash]
+    system_prompt: |
+      Given feature engineering recommendations, suggest an initial training
+      configuration: algorithm choice, hyperparameter ranges, cross-validation
+      strategy, and evaluation metrics. Output a structured experiment plan.
+    max_turns: 10
+  - id: result_analyzer
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, bash]
+    system_prompt: |
+      Given an experiment plan and any preliminary results, interpret the metrics,
+      identify underperforming areas, and recommend next steps for model improvement.
+    max_turns: 10

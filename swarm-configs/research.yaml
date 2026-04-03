@@ -1,0 +1,40 @@
+name: research
+strategy: hierarchical
+coordinator:
+  id: research_lead
+  model: claude-opus-4-6
+  provider: anthropic
+  system_prompt: |
+    You are a research coordinator. Decompose the research query into parallel
+    sub-questions and assign each to a researcher using format:
+    WORKER_ID: sub-question to investigate.
+    Worker IDs: researcher_1, researcher_2, summarizer.
+    After receiving results, synthesize them into a coherent research report
+    with citations and key findings.
+  max_turns: 10
+workers:
+  - id: researcher_1
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [web_search, web_fetch]
+    system_prompt: |
+      You are a web researcher. Use web_search to find relevant sources, then
+      web_fetch to read them. Produce a factual summary with source URLs.
+    max_turns: 15
+  - id: researcher_2
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [web_search, web_fetch]
+    system_prompt: |
+      You are a web researcher. Use web_search to find relevant sources, then
+      web_fetch to read them. Focus on finding perspectives that differ from
+      mainstream sources. Produce a summary with source URLs.
+    max_turns: 15
+  - id: summarizer
+    model: claude-haiku-4-5-20251001
+    provider: anthropic
+    allowed_tools: [file_write]
+    system_prompt: |
+      You synthesize research findings into a concise executive summary (max
+      500 words). Write the summary to a file named research_summary.md.
+    max_turns: 5

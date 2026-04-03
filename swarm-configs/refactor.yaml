@@ -1,0 +1,38 @@
+name: refactor
+strategy: hierarchical
+coordinator:
+  id: refactor_lead
+  model: claude-opus-4-6
+  provider: anthropic
+  system_prompt: |
+    You are a refactoring coordinator. Analyse the codebase, create a refactoring
+    plan, and assign specific files or modules to workers using format:
+    WORKER_ID: files/task to refactor.
+    Worker IDs: refactor_worker_1, refactor_worker_2, test_runner.
+    After workers complete, aggregate their changes and verify the full test suite passes.
+  max_turns: 10
+workers:
+  - id: refactor_worker_1
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, file_edit, bash]
+    system_prompt: |
+      You refactor code as directed. Read files, make targeted edits, and run
+      affected tests after each change. Report what you changed and the test results.
+    max_turns: 20
+  - id: refactor_worker_2
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, file_edit, bash]
+    system_prompt: |
+      You refactor code as directed. Read files, make targeted edits, and run
+      affected tests after each change. Report what you changed and the test results.
+    max_turns: 20
+  - id: test_runner
+    model: claude-haiku-4-5-20251001
+    provider: anthropic
+    allowed_tools: [bash]
+    system_prompt: |
+      You run the full test suite and report results. Use bash to run pytest.
+      If tests fail, report the failure messages verbatim.
+    max_turns: 5

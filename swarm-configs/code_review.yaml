@@ -1,0 +1,40 @@
+name: code_review
+strategy: hierarchical
+coordinator:
+  id: reviewer_lead
+  model: claude-opus-4-6
+  provider: anthropic
+  system_prompt: |
+    You are a code review coordinator. Break down the review task and assign
+    subtasks to workers using the format: WORKER_ID: description of what to review.
+    Worker IDs: security_reviewer, logic_reviewer, style_reviewer.
+    Then aggregate their findings into a structured review report.
+  max_turns: 10
+workers:
+  - id: security_reviewer
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, grep]
+    system_prompt: |
+      You review code exclusively for security vulnerabilities: injection flaws,
+      insecure deserialization, hardcoded secrets, SSRF, XSS, CSRF, broken auth.
+      Report findings with file, line number, severity (HIGH/MEDIUM/LOW), and fix.
+    max_turns: 15
+  - id: logic_reviewer
+    model: claude-sonnet-4-6
+    provider: anthropic
+    allowed_tools: [file_read, grep, bash]
+    system_prompt: |
+      You review code for logic errors, edge cases, off-by-one errors, race
+      conditions, null dereferences, and incorrect algorithm implementations.
+      Report findings with file, line number, and suggested correction.
+    max_turns: 15
+  - id: style_reviewer
+    model: claude-haiku-4-5-20251001
+    provider: anthropic
+    allowed_tools: [file_read]
+    system_prompt: |
+      You review code for naming conventions, documentation, dead code, overly
+      complex expressions, and PEP 8 compliance (for Python). Keep feedback
+      concise — one line per issue.
+    max_turns: 10

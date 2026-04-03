@@ -34,7 +34,7 @@ class AnthropicProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-5",
+        model: str = "claude-sonnet-4-6",
         max_tokens: int = 8096,
     ) -> None:
         """Initialise the Anthropic adapter.

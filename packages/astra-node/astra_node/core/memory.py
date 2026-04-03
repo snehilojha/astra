@@ -150,6 +150,30 @@ class PersistentMemory(MemorySystem):
         profile = self.get_user_context()
         return QueryContext(retrieved_chunks=chunks, user_profile=profile)
 
+    def inject_into_system_prompt(self, base: str) -> str:
+        """Prepend MEMORY.md index to the system prompt.
+
+        Overrides the ABC default (which calls query("") and returns nothing
+        for an empty user message). PersistentMemory always injects the full
+        MEMORY.md index so the model has its persistent context every turn.
+
+        Args:
+            base: The base system prompt text.
+
+        Returns:
+            System prompt with MEMORY.md prepended, or base if index is empty.
+        """
+        index_path = self.memory_dir / "MEMORY.md"
+        if not index_path.exists():
+            return base
+        try:
+            raw = index_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return base
+        if not raw:
+            return base
+        return f"## Memory\n{raw}\n\n{base}"
+
     def update(self, query: str, used_chunks: list[str]) -> None:
         """No-op for v1. V2 will track access patterns (F-Monitor)."""
         pass

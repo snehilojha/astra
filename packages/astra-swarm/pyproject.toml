@@ -4,12 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "astra-swarm"
-version = "0.0.2"
-description = "Astra swarm orchestration"
+version = "0.1.0"
+description = "Swarm orchestration for the Astra framework — pipeline, parallel, hierarchical."
+readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = { text = "MIT" }
 dependencies = [
-    "astra-node",
+    "astra-node>=0.1.0",
     "pyyaml>=6.0,<7.0",
 ]
 

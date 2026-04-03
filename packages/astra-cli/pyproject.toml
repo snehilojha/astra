@@ -4,17 +4,21 @@ build-backend = "hatchling.build"
 
 [project]
 name = "astra-cli"
-version = "0.0.2"
-description = "Astra CLI - terminal interface for the Astra agent framework"
+version = "0.1.0"
+description = "Terminal interface for the Astra framework — run agents and swarms from the command line."
+readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = { text = "MIT" }
 dependencies = [
-    "astra-node",
-    "astra-swarm",
+    "astra-node>=0.1.0",
+    "astra-swarm>=0.1.0",
     "typer>=0.12,<1.0",
     "rich>=13.0,<14.0",
     "prompt-toolkit>=3.0,<4.0",
 ]
+
+[project.scripts]
+astra = "astra_cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["astra_cli"]

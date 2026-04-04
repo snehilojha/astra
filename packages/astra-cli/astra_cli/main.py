@@ -14,7 +14,10 @@ def _load_config_into_env() -> None:
     config_path = Path.home() / ".astra" / "config.json"
     if not config_path.exists():
         return
-    cfg = json.loads(config_path.read_text())
+    try:
+        cfg = json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
     for key, value in cfg.items():
         if key not in os.environ:
             os.environ[key] = value
@@ -39,6 +42,7 @@ def _root(ctx: typer.Context) -> None:
     _load_config_into_env()
     if ctx.invoked_subcommand is None:
         from astra_cli.session import repl as _repl
+
         _repl.start()
 
 

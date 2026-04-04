@@ -38,6 +38,21 @@ class GlobTool(BaseTool):
     permission_level = PermissionLevel.ALWAYS_ALLOW
 
     _MAX_RESULTS = 200
+    _IGNORE_DIRS = frozenset(
+        {
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".idea",
+            ".vscode",
+            "dist",
+            "build",
+            ".mypy_cache",
+            ".pytest_cache",
+        }
+    )
 
     def execute(self, input: GlobInput, ctx: ToolContext) -> ToolResult:
         """Search for files matching the pattern.
@@ -58,12 +73,17 @@ class GlobTool(BaseTool):
 
         try:
             matches = sorted(root.glob(input.pattern))
-            file_matches = [str(p) for p in matches if p.is_file()]
+            file_matches = [
+                str(p)
+                for p in matches
+                if p.is_file()
+                and not any(part in self._IGNORE_DIRS for part in p.parts)
+            ]
 
             if not file_matches:
                 return ToolResult.ok("No files matched.")
 
-            truncated = file_matches[:self._MAX_RESULTS]
+            truncated = file_matches[: self._MAX_RESULTS]
             output = "\n".join(truncated)
             if len(file_matches) > self._MAX_RESULTS:
                 output += f"\n... (showing {self._MAX_RESULTS} of {len(file_matches)} matches)"

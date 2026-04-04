@@ -62,13 +62,14 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         Tuple of (metadata_dict, body_text). Both are empty/empty if
         frontmatter is absent or malformed.
     """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
     if end == -1:
         return {}, text
     front = text[4:end]
-    body = text[end + 5:]
+    body = text[end + 5 :]
     meta: dict[str, str] = {}
     for line in front.splitlines():
         if ":" in line:
@@ -185,7 +186,9 @@ class PersistentMemory(MemorySystem):
             documents: List of text strings to store as new memories.
         """
         for doc in documents:
-            first_line = doc.splitlines()[0][:80] if doc.strip() else "ingested document"
+            first_line = (
+                doc.splitlines()[0][:80] if doc.strip() else "ingested document"
+            )
             entry = MemoryEntry(
                 path=Path(""),  # will be set by save()
                 name=first_line,
@@ -328,22 +331,18 @@ class PersistentMemory(MemorySystem):
 
         content = "\n".join(lines) + "\n" if lines else ""
 
-        # Enforce line limit
         line_list = content.splitlines(keepends=True)
         if len(line_list) > _INDEX_MAX_LINES:
             line_list = line_list[:_INDEX_MAX_LINES]
             line_list.append("<!-- truncated: too many entries -->\n")
             content = "".join(line_list)
 
-        # Enforce byte limit
         encoded = content.encode("utf-8")
         if len(encoded) > _INDEX_MAX_BYTES:
-            while len(content.encode("utf-8")) > _INDEX_MAX_BYTES:
-                lines_remaining = content.splitlines(keepends=True)
-                if not lines_remaining:
-                    break
-                lines_remaining = lines_remaining[:-1]
-                content = "".join(lines_remaining)
+            target_bytes = _INDEX_MAX_BYTES - 100
+            while len(content.encode("utf-8")) > target_bytes and line_list:
+                line_list = line_list[:-1]
+                content = "".join(line_list)
             content += "<!-- truncated: index too large -->\n"
 
         index_path.write_text(content, encoding="utf-8")
@@ -402,8 +401,7 @@ class PersistentMemory(MemorySystem):
 
         # Build a minimal message list for the extraction call
         convo_text = "\n".join(
-            f"{m.get('role', 'user')}: {_extract_text(m)}"
-            for m in new_messages
+            f"{m.get('role', 'user')}: {_extract_text(m)}" for m in new_messages
         )
         extraction_messages = [
             {"role": "user", "content": f"Conversation to analyse:\n\n{convo_text}"}
@@ -417,6 +415,7 @@ class PersistentMemory(MemorySystem):
                 system=extraction_prompt,
             ):
                 from astra_node.core.events import TextDelta
+
                 if isinstance(event, TextDelta):
                     collected_text += event.text
         except Exception:
@@ -491,7 +490,7 @@ class PersistentMemory(MemorySystem):
 
     def clear(self) -> None:
         """Delete all memory files and reset MEMORY.md."""
-        for md_file in self.memory_dir.glob("*.md"):
+        for md_file in self.memory_dir.rglob("*.md"):
             md_file.unlink(missing_ok=True)
         index_path = self.memory_dir / "MEMORY.md"
         index_path.write_text("", encoding="utf-8")
@@ -500,6 +499,7 @@ class PersistentMemory(MemorySystem):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_text(message: dict) -> str:
     """Extract plain text from a message dict (handles content blocks)."""

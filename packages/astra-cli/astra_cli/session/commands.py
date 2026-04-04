@@ -13,21 +13,28 @@ from rich.text import Text
 ACCENT = "#f97316"
 
 _HELP_ROWS = [
-    ("/provider", "Switch LLM provider (anthropic, openai, ollama)"),
-    ("/model",    "Switch model for current provider"),
-    ("/clear",    "Clear conversation history"),
-    ("/memory",   "Show persistent memory (~/.astra/memory/)"),
-    ("/tools",    "List registered tools and permission levels"),
-    ("/cost",     "Show token usage for this session"),
+    ("/provider", "Switch LLM provider (anthropic, openai, openrouter, ollama)"),
+    ("/model", "Switch model for current provider"),
+    ("/clear", "Clear conversation history"),
+    ("/memory", "Show persistent memory (~/.astra/memory/)"),
+    ("/tools", "List registered tools and permission levels"),
+    ("/cost", "Show token usage for this session"),
     ("/swarm <file>", "Run a swarm YAML file"),
-    ("/help",     "Show this help"),
-    ("/exit",     "Exit Astra"),
+    ("/help", "Show this help"),
+    ("/exit", "Exit Astra"),
 ]
 
 _KNOWN_MODELS: dict[str, list[str]] = {
     "anthropic": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
-    "openai":    ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o3-mini"],
-    "ollama":    ["llama3.2", "mistral", "gemma3", "phi4"],
+    "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o3-mini"],
+    "openrouter": [
+        "anthropic/claude-sonnet-4",
+        "anthropic/claude-opus-4",
+        "openai/gpt-4o",
+        "openai/o1",
+        "google/gemini-2.0-flash",
+    ],
+    "ollama": ["llama3.2", "mistral", "gemma3", "phi4"],
 }
 _CUSTOM_OPTION = "enter custom model name..."
 
@@ -77,6 +84,7 @@ def handle_command(raw: str, state, console: Console) -> CommandResult:
 # ---------------------------------------------------------------------------
 # Individual handlers
 # ---------------------------------------------------------------------------
+
 
 def _cmd_help(console: Console) -> CommandResult:
     table = Table(show_header=False, box=None, padding=(0, 2))
@@ -134,25 +142,18 @@ def _cmd_tools(state, console: Console) -> CommandResult:
 
 def _cmd_provider(state, console: Console) -> CommandResult:
     """Interactive provider selection with optional API key entry."""
-    providers = ["anthropic", "openai", "ollama"]
-    console.print("Available providers:")
-    for i, p in enumerate(providers, 1):
-        marker = f"[{ACCENT}]>[/{ACCENT}]" if p == state.provider_name else " "
-        console.print(f"  {marker} {i}. {p}")
+    from astra_cli.session.interact import _interactive_select
 
-    raw = console.input(f"  [{ACCENT}]Select (1-3):[/{ACCENT}] ").strip()
-    try:
-        idx = int(raw) - 1
-        chosen = providers[idx]
-    except (ValueError, IndexError):
-        console.print("[red]Invalid selection.[/red]")
-        return CommandResult(handled=True)
+    providers = ["anthropic", "openai", "openrouter", "ollama"]
+    prompt = f"Select provider (current: {state.provider_name}):"
+    chosen = _interactive_select(prompt=prompt, options=providers, console=console)
 
-    # Check API key
     import os
+
     key_map = {
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
         "ollama": None,
     }
     key_name = key_map.get(chosen)
@@ -162,15 +163,19 @@ def _cmd_provider(state, console: Console) -> CommandResult:
         ).strip()
         if api_key:
             os.environ[key_name] = api_key
-            # Save to config
             config_path = Path.home() / ".astra" / "config.json"
             config_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg = json.loads(config_path.read_text()) if config_path.exists() else {}
+            cfg = _read_config_safe(config_path)
             cfg[key_name] = api_key
             config_path.write_text(json.dumps(cfg, indent=2))
             console.print(f"  [{ACCENT}]Saved {key_name} to config.[/{ACCENT}]")
 
     state.provider_name = chosen
+    config_path = Path.home() / ".astra" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = _read_config_safe(config_path)
+    cfg["ASTRA_PROVIDER"] = chosen
+    config_path.write_text(json.dumps(cfg, indent=2))
     _rebuild_engine(state, console)
     console.print(f"  [{ACCENT}]Provider set to {chosen}.[/{ACCENT}]")
     return CommandResult(handled=True)
@@ -197,7 +202,7 @@ def _cmd_model(state, console: Console) -> CommandResult:
     state.model = chosen
     config_path = Path.home() / ".astra" / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg = json.loads(config_path.read_text()) if config_path.exists() else {}
+    cfg = _read_config_safe(config_path)
     cfg["ASTRA_MODEL"] = chosen
     config_path.write_text(json.dumps(cfg, indent=2))
 
@@ -208,6 +213,7 @@ def _cmd_model(state, console: Console) -> CommandResult:
 
 def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
     import asyncio
+    import threading
     from astra_cli.display.event_renderer import EventRenderer
 
     if not arg:
@@ -221,6 +227,7 @@ def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
 
     try:
         from astra_swarm.swarm_loader import load_swarm_from_yaml
+
         _cfg, coordinator = load_swarm_from_yaml(yaml_path)
     except Exception as exc:
         console.print(f"[red]Failed to load swarm:[/red] {exc}")
@@ -233,17 +240,69 @@ def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
 
     renderer = EventRenderer(console=console)
 
-    async def _run() -> None:
+    async def _run_swarm() -> None:
         async for event in coordinator.run(task):
             renderer.render(event)
 
-    asyncio.run(_run())
+    def _run_in_thread() -> None:
+        asyncio.run(_run_swarm())
+
+    try:
+        loop = asyncio.get_running_loop()
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        thread.join()
+    except RuntimeError:
+        asyncio.run(_run_swarm())
+    return CommandResult(handled=True)
+
+    yaml_path = Path(arg).expanduser()
+    if not yaml_path.exists():
+        console.print(f"[red]File not found:[/red] {yaml_path}")
+        return CommandResult(handled=True)
+
+    try:
+        from astra_swarm.swarm_loader import load_swarm_from_yaml
+
+        _cfg, coordinator = load_swarm_from_yaml(yaml_path)
+    except Exception as exc:
+        console.print(f"[red]Failed to load swarm:[/red] {exc}")
+        return CommandResult(handled=True)
+
+    task = console.input(f"  [{ACCENT}]Task for swarm:[/{ACCENT}] ").strip()
+    if not task:
+        console.print("[dim]Cancelled.[/dim]")
+        return CommandResult(handled=True)
+
+    renderer = EventRenderer(console=console)
+
+    async def _run_swarm() -> None:
+        async for event in coordinator.run(task):
+            renderer.render(event)
+
+    try:
+        loop = asyncio.get_running_loop()
+        import nest_asyncio
+
+        nest_asyncio.apply(loop)
+        asyncio.run(_run_swarm())
+    except RuntimeError:
+        asyncio.run(_run_swarm())
+    except ImportError:
+        try:
+            import asyncio as _asyncio
+
+            _asyncio.run(_run_swarm())
+        except RuntimeError as e:
+            console.print(f"[red]Cannot run swarm from async context:[/red] {e}")
+            console.print("[dim]Install nest_asyncio: pip install nest_asyncio[/dim]")
     return CommandResult(handled=True)
 
 
 # ---------------------------------------------------------------------------
 # Engine rebuild (shared by /provider and /model)
 # ---------------------------------------------------------------------------
+
 
 def _rebuild_engine(state, console: Console) -> None:
     """Rebuild the QueryEngine preserving existing history."""
@@ -262,3 +321,13 @@ def _rebuild_engine(state, console: Console) -> None:
     # Transplant history so conversation context is preserved
     new_engine._history = old_history
     state.engine = new_engine
+
+
+def _read_config_safe(config_path: Path) -> dict:
+    """Read config JSON and tolerate invalid files."""
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}

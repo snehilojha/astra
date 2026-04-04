@@ -2,8 +2,8 @@ name: refactor
 strategy: hierarchical
 coordinator:
   id: refactor_lead
-  model: claude-opus-4-6
-  provider: anthropic
+  model: anthropic/claude-opus-4
+  provider: openrouter
   system_prompt: |
     You are a refactoring coordinator. Analyse the codebase, create a refactoring
     plan, and assign specific files or modules to workers using format:
@@ -13,24 +13,24 @@ coordinator:
   max_turns: 10
 workers:
   - id: refactor_worker_1
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: anthropic/claude-sonnet-4
+    provider: openrouter
     allowed_tools: [file_read, file_edit, bash]
     system_prompt: |
       You refactor code as directed. Read files, make targeted edits, and run
       affected tests after each change. Report what you changed and the test results.
     max_turns: 20
   - id: refactor_worker_2
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: anthropic/claude-sonnet-4
+    provider: openrouter
     allowed_tools: [file_read, file_edit, bash]
     system_prompt: |
       You refactor code as directed. Read files, make targeted edits, and run
       affected tests after each change. Report what you changed and the test results.
     max_turns: 20
   - id: test_runner
-    model: claude-haiku-4-5-20251001
-    provider: anthropic
+    model: anthropic/claude-haiku-4-5
+    provider: openrouter
     allowed_tools: [bash]
     system_prompt: |
       You run the full test suite and report results. Use bash to run pytest.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,7 +48,12 @@ class SessionState:
 def start() -> None:
     """Launch the interactive REPL."""
     console = Console()
-    state = _build_session_state(console)
+    try:
+        state = _build_session_state(console)
+    except Exception as exc:
+        console.print(f"[red]Failed to initialize session:[/red] {exc}")
+        _show_startup_help(console)
+        return
 
     _banner_mod.print_banner(
         console=console,
@@ -98,28 +104,37 @@ async def _run_agent_turn(
 ) -> None:
     """Run one user turn through the engine, intercepting ASK permissions."""
     from astra_node.core.events import ToolStart, UsageUpdate
+    from astra_node.utils.errors import ProviderError
 
-    async for event in state.engine.run(user_input):
-        if isinstance(event, ToolStart) and event.tool_name in DANGEROUS_TOOLS:
-            tool = state.registry._tools.get(event.tool_name)
-            if tool is not None:
-                decision = state.permission_manager.check_level(
-                    event.tool_name, tool.permission_level, event.tool_input
-                )
-                if decision == PermissionDecision.ASK:
-                    user_decision = _prompt_permission(
-                        event.tool_name,
-                        event.tool_input,
-                        state.permission_manager,
-                        console,
+    try:
+        async for event in state.engine.run(user_input):
+            if isinstance(event, ToolStart) and event.tool_name in DANGEROUS_TOOLS:
+                tool = state.registry._tools.get(event.tool_name)
+                if tool is not None:
+                    decision = state.permission_manager.check_level(
+                        event.tool_name, tool.permission_level, event.tool_input
                     )
-                    if user_decision == PermissionDecision.DENY:
-                        renderer.render(event)
-                        continue
-        if isinstance(event, UsageUpdate):
-            state.total_input_tokens += event.input_tokens
-            state.total_output_tokens += event.output_tokens
-        renderer.render(event)
+                    if decision == PermissionDecision.ASK:
+                        user_decision = _prompt_permission(
+                            event.tool_name,
+                            event.tool_input,
+                            state.permission_manager,
+                            console,
+                        )
+                        if user_decision == PermissionDecision.DENY:
+                            renderer.render(event)
+                            continue
+            if isinstance(event, UsageUpdate):
+                state.total_input_tokens += event.input_tokens
+                state.total_output_tokens += event.output_tokens
+            renderer.render(event)
+    except ProviderError as exc:
+        console.print(f"\n[red]Error: {exc}[/red]")
+        _handle_provider_error_with_fallback(
+            provider=state.provider_name,
+            console=console,
+            error_message=str(exc),
+        )
 
 
 async def _compact(state: SessionState, console: Console) -> None:
@@ -163,11 +178,14 @@ def _prompt_permission(
 
 def _ask_permission(console: Console) -> str:
     """Prompt [yes/no/always] with arrow key selection and return the raw answer."""
-    return _interactive_select(
-        prompt="Allow?",
-        options=["yes", "no", "always"],
-        console=console,
-    )
+    try:
+        return _interactive_select(
+            prompt="Allow?",
+            options=["yes", "no", "always"],
+            console=console,
+        )
+    except (EOFError, KeyboardInterrupt):
+        return "no"
 
 
 def _toolbar_text(state: SessionState) -> str:
@@ -200,7 +218,7 @@ async def _read_input(state: SessionState) -> str:
 
 
 def _build_session_state(console: Console) -> SessionState:
-    """Build SessionState from config, defaulting to anthropic."""
+    """Build SessionState from config, prompting for setup if needed."""
     from astra_cli.commands.run import _build_provider
     from astra_node.tools.bash import BashTool
     from astra_node.tools.file_read import FileReadTool
@@ -209,17 +227,32 @@ def _build_session_state(console: Console) -> SessionState:
     from astra_node.tools.grep import GrepTool
     from astra_node.tools.glob_tool import GlobTool
 
-    # Read saved provider/model from config
     config_path = Path.home() / ".astra" / "config.json"
     cfg: dict = {}
     if config_path.exists():
-        import json
-
         cfg = json.loads(config_path.read_text())
 
-    provider_name = cfg.get("ASTRA_PROVIDER", "anthropic")
+    provider_name = cfg.get("ASTRA_PROVIDER")
     model = cfg.get("ASTRA_MODEL") or None
     base_url = cfg.get("ASTRA_BASE_URL") or None
+
+    if not provider_name:
+        provider_name = _prompt_provider_selection(console)
+        if provider_name:
+            cfg["ASTRA_PROVIDER"] = provider_name
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(json.dumps(cfg, indent=2))
+        else:
+            provider_name = "anthropic"
+
+    env_var = _get_api_key_env_var(provider_name)
+    if env_var and not os.environ.get(env_var):
+        key_from_config = cfg.get(env_var)
+        if key_from_config:
+            os.environ[env_var] = key_from_config
+        else:
+            console.print(f"[yellow]Configure your API key to get started.[/yellow]")
+            _prompt_for_api_key(env_var, provider_name, console)
 
     registry = ToolRegistry()
     for tool in [
@@ -249,4 +282,137 @@ def _build_session_state(console: Console) -> SessionState:
         engine=engine,
         permission_manager=pm,
         registry=registry,
+    )
+
+
+def _get_api_key_env_var(provider: str) -> str | None:
+    """Return the environment variable name for the given provider's API key."""
+    mapping = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "ollama": None,
+    }
+    return mapping.get(provider)
+
+
+def _prompt_provider_selection(console: Console) -> str | None:
+    """Prompt user to select a provider on first run."""
+    from astra_cli.session.interact import _interactive_select
+
+    console.print(f"[{ACCENT}]Welcome to Astra![/{ACCENT}]")
+    console.print(
+        "[dim]Select a provider to get started (or skip to configure later):[/dim]"
+    )
+
+    providers = ["anthropic", "openai", "openrouter", "ollama", "skip"]
+    chosen = _interactive_select(
+        prompt="Select provider:",
+        options=providers,
+        console=console,
+    )
+
+    if chosen == "skip":
+        return None
+    return chosen
+
+
+def _prompt_for_api_key(env_var: str, provider: str, console: Console) -> None:
+    """Prompt the user to enter an API key and save it to config."""
+    try:
+        from astra_cli.session.interact import _interactive_select
+
+        answer = _interactive_select(
+            prompt=f"Enter {provider} API key now?",
+            options=["yes", "skip"],
+            console=console,
+        )
+        if answer.strip().lower() != "yes":
+            console.print(
+                f"[dim]You can configure later with /provider command or `astra config set {env_var} <key>`[/dim]"
+            )
+            return
+
+        key = console.input(f"Enter your {provider} API key: ").strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[dim]Skipped.[/dim]")
+        return
+
+    if not key:
+        console.print("[dim]No key entered.[/dim]")
+        return
+
+    os.environ[env_var] = key
+
+    config_path = Path.home() / ".astra" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cfg: dict = {}
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    cfg[env_var] = key
+    config_path.write_text(json.dumps(cfg, indent=2))
+
+    console.print(f"[green]API key saved.[/green]")
+
+
+def _handle_provider_error_with_fallback(
+    provider: str,
+    console: Console,
+    error_message: str,
+) -> None:
+    """Print helpful auth/config hints and offer inline API key setup."""
+    env_var = _get_api_key_env_var(provider)
+    if not env_var:
+        console.print(
+            "[dim]This provider does not require an API key. Check your model/base URL.[/dim]"
+        )
+        return
+
+    missing = not os.environ.get(env_var)
+    is_auth = "auth" in error_message.lower() or "api key" in error_message.lower()
+
+    if missing:
+        console.print(f"[yellow]{env_var} is not set.[/yellow]")
+    elif is_auth:
+        console.print(f"[yellow]{env_var} may be invalid or expired.[/yellow]")
+    else:
+        console.print(
+            f"[yellow]Provider configuration may be incorrect for `{provider}`.[/yellow]"
+        )
+
+    _print_api_key_hints(provider, env_var, console)
+    _prompt_for_api_key(env_var, provider, console)
+
+
+def _print_api_key_hints(provider: str, env_var: str, console: Console) -> None:
+    """Print practical next-step hints for provider authentication."""
+    provider_hint = {
+        "anthropic": "https://console.anthropic.com/settings/keys",
+        "openai": "https://platform.openai.com/api-keys",
+        "openrouter": "https://openrouter.ai/keys",
+    }
+    console.print(
+        f"[dim]Run `astra config set {env_var} <your-key>` to persist it.[/dim]"
+    )
+    dashboard = provider_hint.get(provider)
+    if dashboard:
+        console.print(f"[dim]Get a key: {dashboard}[/dim]")
+
+
+def _shell_export_hint(env_var: str) -> str:
+    """Return an OS-appropriate env export hint."""
+    if os.name == "nt":
+        return f"$env:{env_var}='YOUR_KEY'"
+    return f"export {env_var}=YOUR_KEY"
+
+
+def _show_startup_help(console: Console) -> None:
+    """Generic startup fallback instructions."""
+    console.print(
+        "[dim]Use /provider to select a provider and configure your API key.[/dim]"
     )

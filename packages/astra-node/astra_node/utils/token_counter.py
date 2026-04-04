@@ -19,6 +19,7 @@ import tiktoken
 # Protocol — injectable interface
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class TokenCounter(Protocol):
     """Protocol for token counting implementations.
@@ -125,10 +126,7 @@ class TiktokenCounter:
         try:
             return tiktoken.encoding_for_model(model)
         except KeyError:
-            raise ValueError(
-                f"Unknown model '{model}'. Cannot determine token encoding. "
-                "Add it to _OPENAI_ENCODING_MAP or use a Claude model prefix."
-            )
+            return tiktoken.get_encoding("cl100k_base")
 
     @staticmethod
     def _is_claude_model(model: str) -> bool:

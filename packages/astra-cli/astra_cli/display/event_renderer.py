@@ -32,6 +32,7 @@ class EventRenderer:
         self._console = console or Console()
         self._total_input = 0
         self._total_output = 0
+        self._swarm_text_buffers: dict[str, str] = {}  # worker_id -> buffered text
 
     # ------------------------------------------------------------------
     # Public API
@@ -115,9 +116,26 @@ class EventRenderer:
         prefix = Text(f"[{worker_id}] ", style="bold magenta")
 
         if inner_type == "text_delta":
+            self._swarm_text_buffers.setdefault(worker_id, "")
+            self._swarm_text_buffers[worker_id] += data.get("text", "")
+            return
+        elif inner_type == "turn_end":
+            # Flush any buffered text before printing the turn_end separator
+            buffered = self._swarm_text_buffers.pop(worker_id, "")
+            if buffered:
+                self._console.print(prefix, end="")
+                self._console.print(buffered, markup=False)
             self._console.print(prefix, end="")
-            self._console.print(data.get("text", ""), end="", markup=False)
-        elif inner_type == "tool_start":
+            self._console.rule(style="dim")
+            return
+        else:
+            # Flush buffered text before any non-delta event (tool calls, errors)
+            buffered = self._swarm_text_buffers.pop(worker_id, "")
+            if buffered:
+                self._console.print(prefix, end="")
+                self._console.print(buffered, markup=False)
+
+        if inner_type == "tool_start":
             summary = _input_summary(data.get("tool_input", {}))
             line = prefix.copy()
             line.append("⚙ running ", style="dim")
@@ -137,9 +155,6 @@ class EventRenderer:
             line.append("✗ ", style="bold red")
             line.append(data.get("error", ""), style="red")
             self._console.print(line)
-        elif inner_type == "turn_end":
-            self._console.print(prefix, end="")
-            self._console.rule(style="dim")
 
 
 # ------------------------------------------------------------------

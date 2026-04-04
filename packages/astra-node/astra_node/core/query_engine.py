@@ -43,7 +43,11 @@ from astra_node.core.registry import ToolRegistry
 from astra_node.permissions.manager import PermissionManager
 from astra_node.permissions.types import PermissionDecision
 from astra_node.providers.base import LLMProvider
-from astra_node.utils.errors import PermissionDeniedError, ProviderError, ToolExecutionError
+from astra_node.utils.errors import (
+    PermissionDeniedError,
+    ProviderError,
+    ToolExecutionError,
+)
 
 
 class QueryEngine:
@@ -81,7 +85,9 @@ class QueryEngine:
             post_turn_hook: Async callable fired after TurnEnd (fire-and-forget).
                             Receives the current history messages list.
         """
-        from astra_node.core.memory_stub import StubMemory  # local import avoids circular
+        from astra_node.core.memory_stub import (
+            StubMemory,
+        )  # local import avoids circular
 
         self._provider = provider
         self._registry = registry
@@ -116,7 +122,9 @@ class QueryEngine:
             turns_used += 1
 
             # Enrich system prompt with memory context
-            enriched_system = self._memory.inject_into_system_prompt(self._system_prompt)
+            enriched_system = self._memory.inject_into_system_prompt(
+                self._system_prompt
+            )
 
             # Build tool schemas for the provider
             provider_name = self._detect_provider()
@@ -147,17 +155,23 @@ class QueryEngine:
             if response.content:
                 assistant_content.append({"type": "text", "text": response.content})
             for tc in response.tool_calls:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tc.id,
-                    "name": tc.name,
-                    "input": tc.input,
-                })
+                assistant_content.append(
+                    {
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.input,
+                    }
+                )
             if assistant_content:
                 self._history.add_assistant(assistant_content)
 
             # --- Tool execution ---
-            if response.stop_reason == "tool_use" and response.tool_calls:
+            if response.stop_reason == "tool_use":
+                if not response.tool_calls:
+                    yield TurnEnd(stop_reason="end_turn")
+                    self._fire_post_turn_hook()
+                    return
                 for tc in response.tool_calls:
                     yield ToolStart(
                         tool_name=tc.name,
@@ -225,6 +239,7 @@ class QueryEngine:
 
                     # Execute the tool
                     from astra_node.core.tool import ToolContext
+
                     ctx = ToolContext()
                     try:
                         result = tool.execute(validated_input, ctx)
@@ -293,7 +308,10 @@ class QueryEngine:
         self._fire_post_turn_hook()
 
     def _detect_provider(self) -> str:
-        """Infer the provider name from the provider instance type."""
+        """Infer the provider name from the provider instance."""
+        provider_name = getattr(self._provider, "provider_name", None)
+        if provider_name and provider_name != "unknown":
+            return provider_name
         class_name = type(self._provider).__name__.lower()
         if "anthropic" in class_name:
             return "anthropic"
@@ -303,10 +321,6 @@ class QueryEngine:
         """Fire the post_turn_hook as a fire-and-forget asyncio task."""
         if self._post_turn_hook is not None:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.create_task(
-                        self._post_turn_hook(self._history.messages)
-                    )
+                asyncio.create_task(self._post_turn_hook(self._history.messages))
             except RuntimeError:
-                pass  # No event loop — skip hook (e.g., in sync test context)
+                pass

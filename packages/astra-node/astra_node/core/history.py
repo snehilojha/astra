@@ -143,9 +143,34 @@ class MessageHistory:
             len(self._messages) > 1
             and counter.count_messages(self._messages, model) > max_tokens
         ):
-            # Try to remove a pair (assistant + tool_result) atomically.
-            # If the first message is a user tool_result, remove it alone
-            # (its paired assistant was already dropped). Otherwise remove one.
+            first = self._messages[0]
+            first_content = first.get("content")
+
+            is_tool_result = (
+                first.get("role") == "user"
+                and isinstance(first_content, list)
+                and any(
+                    isinstance(b, dict) and b.get("type") == "tool_result"
+                    for b in first_content
+                )
+            )
+
+            if is_tool_result and len(self._messages) > 1:
+                second = self._messages[1]
+                second_content = second.get("content")
+                is_assistant_with_tool_use = (
+                    second.get("role") == "assistant"
+                    and isinstance(second_content, list)
+                    and any(
+                        isinstance(b, dict) and b.get("type") == "tool_use"
+                        for b in second_content
+                    )
+                )
+                if is_assistant_with_tool_use:
+                    self._messages.pop(0)
+                    self._messages.pop(0)
+                    continue
+
             self._messages.pop(0)
 
     # ------------------------------------------------------------------
@@ -205,14 +230,17 @@ class MessageHistory:
                         text_parts.append(block.get("text", ""))
                     elif block.get("type") == "tool_use":
                         import json
-                        tool_calls.append({
-                            "id": block["id"],
-                            "type": "function",
-                            "function": {
-                                "name": block["name"],
-                                "arguments": json.dumps(block.get("input", {})),
-                            },
-                        })
+
+                        tool_calls.append(
+                            {
+                                "id": block["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": block["name"],
+                                    "arguments": json.dumps(block.get("input", {})),
+                                },
+                            }
+                        )
 
                 assistant_msg: dict = {"role": "assistant"}
                 text_content = "".join(text_parts)

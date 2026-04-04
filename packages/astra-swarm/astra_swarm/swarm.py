@@ -26,6 +26,7 @@ from astra_node.providers.base import LLMProvider
 # SwarmEvent
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SwarmEvent(AgentEvent):
     """An AgentEvent annotated with the worker that produced it.
@@ -44,6 +45,7 @@ class SwarmEvent(AgentEvent):
 # ---------------------------------------------------------------------------
 # Configuration dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WorkerConfig:
@@ -98,6 +100,7 @@ class SwarmConfig:
 # WorkerExecutor Protocol
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class WorkerExecutor(Protocol):
     """Swappable execution backend for worker agents.
@@ -131,6 +134,7 @@ class AsyncioExecutor:
 # SwarmCoordinator helpers
 # ---------------------------------------------------------------------------
 
+
 def _event_to_swarm(worker_id: str, event: AgentEvent) -> SwarmEvent:
     """Wrap any AgentEvent as a SwarmEvent, preserving fields as data dict."""
     data = {k: v for k, v in vars(event).items() if k != "type"}
@@ -140,15 +144,14 @@ def _event_to_swarm(worker_id: str, event: AgentEvent) -> SwarmEvent:
 def _extract_final_text(events: list[SwarmEvent]) -> str:
     """Extract the concatenated text_delta content from a list of SwarmEvents."""
     return "".join(
-        e.data.get("text", "")
-        for e in events
-        if e.inner_type == "text_delta"
+        e.data.get("text", "") for e in events if e.inner_type == "text_delta"
     )
 
 
 # ---------------------------------------------------------------------------
 # SwarmCoordinator
 # ---------------------------------------------------------------------------
+
 
 class SwarmCoordinator:
     """Orchestrates multiple QueryEngine workers according to a SwarmConfig.
@@ -225,6 +228,7 @@ class SwarmCoordinator:
                     worker_events.append(_event_to_swarm(worker_cfg.id, event))
             except Exception as exc:
                 from astra_node.core.events import AgentError
+
                 err = AgentError(
                     error=str(exc),
                     tool_name="",
@@ -234,16 +238,27 @@ class SwarmCoordinator:
                 worker_events.append(_event_to_swarm(worker_cfg.id, err))
             return worker_events
 
-        tasks = [
-            asyncio.create_task(run_worker(wcfg))
-            for wcfg in self._config.workers
-        ]
+        tasks = [asyncio.create_task(run_worker(wcfg)) for wcfg in self._config.workers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
             if isinstance(result, list):
                 for event in result:
                     yield event
+            elif isinstance(result, Exception):
+                from astra_node.core.events import AgentError
+
+                err = AgentError(
+                    error=f"Worker failed: {result}",
+                    tool_name="",
+                    tool_use_id="",
+                    recoverable=False,
+                )
+                yield SwarmEvent(
+                    worker_id="parallel_executor",
+                    inner_type="agent_error",
+                    data={"error": str(result), "recoverable": False},
+                )
 
     async def _run_hierarchical(self, task: str) -> AsyncIterator[SwarmEvent]:
         """Coordinator plans, workers execute in parallel, coordinator aggregates."""
@@ -271,7 +286,7 @@ class SwarmCoordinator:
             for worker_cfg in self._config.workers:
                 prefix = f"{worker_cfg.id}:"
                 if line.strip().startswith(prefix):
-                    worker_tasks[worker_cfg.id] = line.strip()[len(prefix):].strip()
+                    worker_tasks[worker_cfg.id] = line.strip()[len(prefix) :].strip()
                     break
 
         # Fallback: unmatched workers get the original task
@@ -284,32 +299,48 @@ class SwarmCoordinator:
             engine = self._make_engine(worker_cfg)
             worker_events = []
             try:
-                async for event in self._executor.run(engine, worker_tasks[worker_cfg.id]):
+                async for event in self._executor.run(
+                    engine, worker_tasks[worker_cfg.id]
+                ):
                     worker_events.append(_event_to_swarm(worker_cfg.id, event))
             except Exception as exc:
                 from astra_node.core.events import AgentError
-                err = AgentError(error=str(exc), tool_name="", tool_use_id="", recoverable=False)
+
+                err = AgentError(
+                    error=str(exc), tool_name="", tool_use_id="", recoverable=False
+                )
                 worker_events.append(_event_to_swarm(worker_cfg.id, err))
             return worker_events
 
         worker_task_objects = [
-            asyncio.create_task(run_worker(wcfg))
-            for wcfg in self._config.workers
+            asyncio.create_task(run_worker(wcfg)) for wcfg in self._config.workers
         ]
-        worker_results = await asyncio.gather(*worker_task_objects, return_exceptions=True)
+        worker_results = await asyncio.gather(
+            *worker_task_objects, return_exceptions=True
+        )
         all_worker_events: list[SwarmEvent] = []
         for result in worker_results:
             if isinstance(result, list):
                 all_worker_events.extend(result)
                 for event in result:
                     yield event
+            elif isinstance(result, Exception):
+                from astra_node.core.events import AgentError
+
+                yield SwarmEvent(
+                    worker_id="hierarchical_worker",
+                    inner_type="agent_error",
+                    data={"error": str(result), "recoverable": False},
+                )
 
         # Phase 3: coordinator aggregates
         worker_summaries = "\n".join(
             f"{w.id}: {_extract_final_text([e for e in all_worker_events if e.worker_id == w.id])}"
             for w in self._config.workers
         )
-        aggregation_task = f"Aggregate these worker results into a final answer:\n{worker_summaries}"
+        aggregation_task = (
+            f"Aggregate these worker results into a final answer:\n{worker_summaries}"
+        )
         coord_engine2 = self._make_engine(coordinator_cfg)
         async for event in self._executor.run(coord_engine2, aggregation_task):
             yield _event_to_swarm(coordinator_cfg.id, event)

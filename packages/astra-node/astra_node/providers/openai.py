@@ -23,6 +23,8 @@ class OpenAIProvider(LLMProvider):
     server (Ollama accepts any non-empty string).
     """
 
+    provider_name = "openai"
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -141,10 +143,13 @@ class OpenAIProvider(LLMProvider):
 
             # Parse accumulated tool calls from JSON argument strings
             import json
+
             tool_calls: list[ToolCall] = []
             for acc in tool_call_accumulators.values():
                 try:
-                    parsed_input = json.loads(acc["arguments"]) if acc["arguments"] else {}
+                    parsed_input = (
+                        json.loads(acc["arguments"]) if acc["arguments"] else {}
+                    )
                 except json.JSONDecodeError:
                     parsed_input = {"_raw": acc["arguments"]}
                 tool_calls.append(
@@ -167,18 +172,21 @@ class OpenAIProvider(LLMProvider):
             )
 
         except openai.AuthenticationError as exc:
+            self._last_response = None
             raise ProviderError(
                 "Authentication failed — check your OPENAI_API_KEY",
                 provider="openai",
                 cause=exc,
             ) from exc
         except openai.APIConnectionError as exc:
+            self._last_response = None
             raise ProviderError(
                 f"Network error connecting to OpenAI API: {exc}",
                 provider="openai",
                 cause=exc,
             ) from exc
         except openai.APIStatusError as exc:
+            self._last_response = None
             raise ProviderError(
                 f"OpenAI API error {exc.status_code}: {exc.message}",
                 provider="openai",

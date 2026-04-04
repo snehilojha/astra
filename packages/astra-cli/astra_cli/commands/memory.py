@@ -9,9 +9,9 @@ app = typer.Typer(help="Manage the agent's persistent memory.")
 
 def _get_memory():
     """Return the active MemorySystem instance."""
-    from astra_node.core.memory_stub import StubMemory
+    from astra_node.core.memory import PersistentMemory
 
-    return StubMemory()
+    return PersistentMemory()
 
 
 @app.command("list")
@@ -49,5 +49,5 @@ def memory_clear(
     if not yes:
         typer.confirm("Clear all memories?", abort=True)
     memory = _get_memory()
-    memory.ingest([])  # StubMemory no-op; PersistentMemory will override
+    memory.clear()
     typer.echo("Memory cleared.")

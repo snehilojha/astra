@@ -4,7 +4,7 @@ Permission: ASK_USER (mutating, potentially dangerous).
 """
 
 import subprocess
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from astra_node.core.tool import BaseTool, PermissionLevel, ToolContext, ToolResult
 
@@ -15,8 +15,16 @@ class BashInput(BaseModel):
     command: str = Field(..., description="The shell command to execute.")
     timeout: int = Field(
         default=30,
+        ge=1,
         description="Maximum seconds to wait for the command. Default 30.",
     )
+
+    @field_validator("timeout")
+    @classmethod
+    def validate_timeout(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("timeout must be at least 1 second")
+        return v
 
 
 class BashTool(BaseTool):
@@ -55,7 +63,11 @@ class BashTool(BaseTool):
                 env=ctx.env if ctx.env else None,
             )
             if result.returncode != 0:
-                output = result.stderr or result.stdout or f"Command exited with code {result.returncode}"
+                output = (
+                    result.stderr
+                    or result.stdout
+                    or f"Command exited with code {result.returncode}"
+                )
                 return ToolResult.err(output)
             return ToolResult.ok(result.stdout)
         except subprocess.TimeoutExpired:

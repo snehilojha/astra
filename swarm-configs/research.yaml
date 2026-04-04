@@ -2,8 +2,8 @@ name: research
 strategy: hierarchical
 coordinator:
   id: research_lead
-  model: claude-opus-4-6
-  provider: anthropic
+  model: anthropic/claude-opus-4
+  provider: openrouter
   system_prompt: |
     You are a research coordinator. Decompose the research query into parallel
     sub-questions and assign each to a researcher using format:
@@ -14,16 +14,16 @@ coordinator:
   max_turns: 10
 workers:
   - id: researcher_1
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: anthropic/claude-sonnet-4
+    provider: openrouter
     allowed_tools: [web_search, web_fetch]
     system_prompt: |
       You are a web researcher. Use web_search to find relevant sources, then
       web_fetch to read them. Produce a factual summary with source URLs.
     max_turns: 15
   - id: researcher_2
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: anthropic/claude-sonnet-4
+    provider: openrouter
     allowed_tools: [web_search, web_fetch]
     system_prompt: |
       You are a web researcher. Use web_search to find relevant sources, then
@@ -31,8 +31,8 @@ workers:
       mainstream sources. Produce a summary with source URLs.
     max_turns: 15
   - id: summarizer
-    model: claude-haiku-4-5-20251001
-    provider: anthropic
+    model: anthropic/claude-haiku-4-5
+    provider: openrouter
     allowed_tools: [file_write]
     system_prompt: |
       You synthesize research findings into a concise executive summary (max

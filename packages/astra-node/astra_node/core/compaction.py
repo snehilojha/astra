@@ -73,7 +73,9 @@ class CompactionEngine:
             True if the history exceeds the threshold fraction of the
             context window.
         """
-        context_window = budget if budget is not None else self._get_context_window(model)
+        context_window = (
+            budget if budget is not None else self._get_context_window(model)
+        )
         current_tokens = history.token_count(counter, model)
         return current_tokens >= int(context_window * self._threshold)
 
@@ -141,7 +143,9 @@ class CompactionEngine:
             # On provider error, return a minimal history with error note
             summary_text = f"[Compaction failed: {exc}. Original history truncated.]"
 
-        summary_text = summary_text.strip() or "[History compacted — no summary generated.]"
+        summary_text = (
+            summary_text.strip() or "[History compacted — no summary generated.]"
+        )
 
         # Build a new minimal history with the summary as a user message
         # followed by a synthetic assistant acknowledgement
@@ -150,7 +154,12 @@ class CompactionEngine:
             f"[Conversation history was compacted. Summary follows:]\n\n{summary_text}"
         )
         compacted.add_assistant(
-            [{"type": "text", "text": "Understood. I have the context from the previous conversation."}]
+            [
+                {
+                    "type": "text",
+                    "text": "Understood. I have the context from the previous conversation.",
+                }
+            ]
         )
         return compacted
 
@@ -161,8 +170,12 @@ class CompactionEngine:
     @staticmethod
     def _get_context_window(model: str) -> int:
         """Return the context window size for the given model."""
+        # Try exact match first
+        if model in _MODEL_CONTEXT_WINDOWS:
+            return _MODEL_CONTEXT_WINDOWS[model]
+        # Then try prefix match
         for prefix, window in _MODEL_CONTEXT_WINDOWS.items():
-            if model.startswith(prefix) or model == prefix:
+            if model.startswith(prefix):
                 return window
         return _DEFAULT_CONTEXT_WINDOW
 
@@ -182,7 +195,9 @@ class CompactionEngine:
                         if block.get("type") == "text":
                             parts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use":
-                            parts.append(f"[tool_use: {block.get('name')}({block.get('input', {})})]")
+                            parts.append(
+                                f"[tool_use: {block.get('name')}({block.get('input', {})})]"
+                            )
                         elif block.get("type") == "tool_result":
                             parts.append(f"[tool_result: {block.get('content', '')}]")
                 lines.append(f"{role.upper()}: {''.join(parts)}")

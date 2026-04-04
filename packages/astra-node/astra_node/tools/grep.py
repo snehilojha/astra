@@ -44,6 +44,21 @@ class GrepTool(BaseTool):
     permission_level = PermissionLevel.ALWAYS_ALLOW
 
     _MAX_RESULTS = 100
+    _IGNORE_DIRS = frozenset(
+        {
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".venv",
+            "venv",
+            ".idea",
+            ".vscode",
+            "dist",
+            "build",
+            ".mypy_cache",
+            ".pytest_cache",
+        }
+    )
 
     def execute(self, input: GrepInput, ctx: ToolContext) -> ToolResult:
         """Search for the pattern in the specified path.
@@ -78,13 +93,17 @@ class GrepTool(BaseTool):
         for file_path in sorted(files):
             if not file_path.is_file():
                 continue
+            if any(part in self._IGNORE_DIRS for part in file_path.parts):
+                continue
             try:
                 text = file_path.read_text(encoding="utf-8", errors="replace")
                 for line_num, line in enumerate(text.splitlines(), start=1):
                     if compiled.search(line):
                         results.append(f"{file_path}:{line_num}:{line.rstrip()}")
                         if len(results) >= self._MAX_RESULTS:
-                            results.append(f"... (truncated at {self._MAX_RESULTS} results)")
+                            results.append(
+                                f"... (truncated at {self._MAX_RESULTS} results)"
+                            )
                             return ToolResult.ok("\n".join(results))
             except Exception:
                 continue

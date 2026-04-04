@@ -55,9 +55,26 @@ def _build_provider(worker_data: dict[str, Any], worker_id: str):
             kwargs["model"] = model
         return OpenAIProvider(**kwargs)
 
+    if provider_name == "openrouter":
+        import os
+        from astra_node.providers.openai import OpenAIProvider
+        return OpenAIProvider(
+            model=model or "anthropic/claude-sonnet-4",
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.environ.get("OPENROUTER_API_KEY"),
+        )
+
+    if provider_name == "ollama":
+        from astra_node.providers.openai import OpenAIProvider
+        return OpenAIProvider(
+            model=model or "llama3.2",
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",
+        )
+
     raise LoadError(
         f"Worker '{worker_id}' has unknown provider '{provider_name}'. "
-        "Supported values: 'anthropic', 'openai'."
+        "Supported values: 'anthropic', 'openai', 'openrouter', 'ollama'."
     )
 
 

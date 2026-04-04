@@ -2,8 +2,8 @@ name: code_review
 strategy: hierarchical
 coordinator:
   id: reviewer_lead
-  model: claude-opus-4-6
-  provider: anthropic
+  model: qwen/qwen3.6-plus:free
+  provider: openrouter
   system_prompt: |
     You are a code review coordinator. Break down the review task and assign
     subtasks to workers using the format: WORKER_ID: description of what to review.
@@ -12,8 +12,8 @@ coordinator:
   max_turns: 10
 workers:
   - id: security_reviewer
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: qwen/qwen3.6-plus:free
+    provider: openrouter
     allowed_tools: [file_read, grep]
     system_prompt: |
       You review code exclusively for security vulnerabilities: injection flaws,
@@ -21,8 +21,8 @@ workers:
       Report findings with file, line number, severity (HIGH/MEDIUM/LOW), and fix.
     max_turns: 15
   - id: logic_reviewer
-    model: claude-sonnet-4-6
-    provider: anthropic
+    model: qwen/qwen3.6-plus:free
+    provider: openrouter
     allowed_tools: [file_read, grep, bash]
     system_prompt: |
       You review code for logic errors, edge cases, off-by-one errors, race
@@ -30,8 +30,8 @@ workers:
       Report findings with file, line number, and suggested correction.
     max_turns: 15
   - id: style_reviewer
-    model: claude-haiku-4-5-20251001
-    provider: anthropic
+    model: qwen/qwen3.6-plus:free
+    provider: openrouter
     allowed_tools: [file_read]
     system_prompt: |
       You review code for naming conventions, documentation, dead code, overly

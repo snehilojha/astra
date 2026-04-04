@@ -18,6 +18,7 @@ from astra_node.utils.token_counter import (
 # Protocol compliance
 # ---------------------------------------------------------------------------
 
+
 class TestTokenCounterProtocol:
     def test_tiktoken_counter_satisfies_protocol(self):
         counter = TiktokenCounter()
@@ -33,6 +34,7 @@ class TestTokenCounterProtocol:
 # ---------------------------------------------------------------------------
 # TiktokenCounter — basic behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestTiktokenCounterBasic:
     def setup_method(self):
@@ -66,6 +68,7 @@ class TestTiktokenCounterBasic:
 # TiktokenCounter — OpenAI models (local, no mock needed)
 # ---------------------------------------------------------------------------
 
+
 class TestTiktokenCounterOpenAI:
     def setup_method(self):
         self.counter = TiktokenCounter()
@@ -98,6 +101,7 @@ class TestTiktokenCounterOpenAI:
 # TiktokenCounter — Claude models (tiktoken estimate with scaling)
 # ---------------------------------------------------------------------------
 
+
 class TestTiktokenCounterClaude:
     def setup_method(self):
         self.counter = TiktokenCounter()
@@ -124,20 +128,22 @@ class TestTiktokenCounterClaude:
 
 
 # ---------------------------------------------------------------------------
-# TiktokenCounter — unknown model raises
+# TiktokenCounter — unknown model fallback
 # ---------------------------------------------------------------------------
 
+
 class TestTiktokenCounterUnknownModel:
-    def test_unknown_model_raises_value_error(self):
+    def test_unknown_model_uses_fallback_encoding(self):
         counter = TiktokenCounter()
         msgs = [{"role": "user", "content": "test"}]
-        with pytest.raises(ValueError, match="Unknown model"):
-            counter.count_messages(msgs, "totally-unknown-model-xyz")
+        result = counter.count_messages(msgs, "totally-unknown-model-xyz")
+        assert result > 0
 
 
 # ---------------------------------------------------------------------------
 # TiktokenCounter — content block format (Anthropic list format)
 # ---------------------------------------------------------------------------
+
 
 class TestTiktokenCounterContentBlocks:
     def setup_method(self):
@@ -147,9 +153,7 @@ class TestTiktokenCounterContentBlocks:
         msgs = [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "Hello from a content block."}
-                ],
+                "content": [{"type": "text", "text": "Hello from a content block."}],
             }
         ]
         count = self.counter.count_messages(msgs, "claude-sonnet-4-5")
@@ -174,6 +178,7 @@ class TestTiktokenCounterContentBlocks:
 # Module-level count_messages() convenience function
 # ---------------------------------------------------------------------------
 
+
 class TestCountMessagesFunction:
     def test_returns_int(self):
         msgs = [{"role": "user", "content": "hi"}]
@@ -188,6 +193,7 @@ class TestCountMessagesFunction:
 # ---------------------------------------------------------------------------
 # Mock injection — verifies protocol is injectable
 # ---------------------------------------------------------------------------
+
 
 class TestMockTokenCounterInjection:
     def test_mock_counter_called_with_correct_args(self):

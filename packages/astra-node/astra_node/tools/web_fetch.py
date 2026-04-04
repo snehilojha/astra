@@ -53,10 +53,13 @@ class WebFetchTool(BaseTool):
                 headers={"User-Agent": "astra-node/0.1 (agent framework)"},
             )
             with urllib.request.urlopen(req, timeout=15) as response:
-                raw = response.read(input.max_length + 1)
+                raw = response.read()
                 text = raw.decode("utf-8", errors="replace")
                 if len(text) > input.max_length:
-                    text = text[:input.max_length] + f"\n... (truncated at {input.max_length} chars)"
+                    text = (
+                        text[: input.max_length]
+                        + f"\n... (truncated at {input.max_length} chars)"
+                    )
                 return ToolResult.ok(text)
         except urllib.error.HTTPError as exc:
             return ToolResult.err(f"HTTP {exc.code}: {exc.reason} — {input.url}")

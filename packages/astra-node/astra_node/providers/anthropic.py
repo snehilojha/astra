@@ -31,6 +31,8 @@ class AnthropicProvider(LLMProvider):
     Handles auth errors, network errors, and stop reason mapping.
     """
 
+    provider_name = "anthropic"
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -103,10 +105,12 @@ class AnthropicProvider(LLMProvider):
                 output_tokens=final.usage.output_tokens,
                 cache_creation_input_tokens=getattr(
                     final.usage, "cache_creation_input_tokens", 0
-                ) or 0,
+                )
+                or 0,
                 cache_read_input_tokens=getattr(
                     final.usage, "cache_read_input_tokens", 0
-                ) or 0,
+                )
+                or 0,
             )
             yield UsageUpdate(
                 input_tokens=usage.input_tokens,
@@ -140,18 +144,21 @@ class AnthropicProvider(LLMProvider):
             )
 
         except anthropic.AuthenticationError as exc:
+            self._last_response = None
             raise ProviderError(
                 "Authentication failed — check your ANTHROPIC_API_KEY",
                 provider="anthropic",
                 cause=exc,
             ) from exc
         except anthropic.APIConnectionError as exc:
+            self._last_response = None
             raise ProviderError(
                 f"Network error connecting to Anthropic API: {exc}",
                 provider="anthropic",
                 cause=exc,
             ) from exc
         except anthropic.APIStatusError as exc:
+            self._last_response = None
             raise ProviderError(
                 f"Anthropic API error {exc.status_code}: {exc.message}",
                 provider="anthropic",

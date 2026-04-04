@@ -65,6 +65,8 @@ class LLMProvider(ABC):
     always work against this interface.
     """
 
+    provider_name: str = "unknown"
+
     @abstractmethod
     async def complete(
         self,

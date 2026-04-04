@@ -23,7 +23,7 @@ def _load_config_into_env() -> None:
 app = typer.Typer(
     name="astra",
     help="Astra — an agentic framework for running AI agents and swarms.",
-    no_args_is_help=True,
+    no_args_is_help=False,
     invoke_without_command=True,
 )
 
@@ -38,7 +38,8 @@ def _root(ctx: typer.Context) -> None:
     """Astra — an agentic framework for running AI agents and swarms."""
     _load_config_into_env()
     if ctx.invoked_subcommand is None:
-        typer.echo(ctx.get_help())
+        from astra_cli.session import repl as _repl
+        _repl.start()
 
 
 def main() -> None:

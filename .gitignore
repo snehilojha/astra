@@ -1,3 +1,7 @@
+__pycache__/
+__pycache__
+*.log
+.env
 claude-code-main/
 dist/
 astra_plan/
@@ -5,3 +9,4 @@ context.md
 docs/
 .superpowers/
 ASTRA.md
+.pytest_cache

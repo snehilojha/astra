@@ -115,7 +115,11 @@ class QueryEngine:
             ProviderError: If the LLM provider fails fatally (auth, network).
                            This propagates up uncaught — the CLI handles it.
         """
-        self._history.add_user(user_message)
+        from astra_node.core.prompt_guard import check_injection, wrap_user_message
+
+        check_injection(user_message)
+        safe_message = wrap_user_message(user_message)
+        self._history.add_user(safe_message)
         turns_used = 0
 
         while turns_used < self._max_turns:
@@ -277,14 +281,33 @@ class QueryEngine:
                         )
                         continue
 
-                    # Successful tool result
+                    # Successful tool result — scan for injection before
+                    # adding to history so malicious file/web content cannot
+                    # silently hijack the next LLM turn.
+                    from astra_node.core.prompt_guard import (
+                        scan_tool_result,
+                        wrap_tool_result,
+                    )
+
+                    tool_output = result.output
+                    if not result.is_error and tool_output:
+                        injection_warning = scan_tool_result(tool_output, tc.name)
+                        if injection_warning:
+                            import logging as _logging
+                            _logging.getLogger(__name__).warning(
+                                "Possible prompt injection detected in output of tool '%s'",
+                                tc.name,
+                            )
+                            tool_output = injection_warning + tool_output
+                        tool_output = wrap_tool_result(tool_output, tc.name)
+
                     self._history.add_tool_result(
-                        tc.id, result.output, is_error=result.is_error
+                        tc.id, tool_output, is_error=result.is_error
                     )
                     yield ToolResult(
                         tool_use_id=tc.id,
                         tool_name=tc.name,
-                        output=result.output,
+                        output=result.output,  # yield original to renderer, not wrapped
                         is_error=result.is_error,
                     )
                     if result.is_error:
@@ -308,10 +331,11 @@ class QueryEngine:
         self._fire_post_turn_hook()
 
     def _detect_provider(self) -> str:
-        """Infer the provider name from the provider instance."""
-        provider_name = getattr(self._provider, "provider_name", None)
-        if provider_name and provider_name != "unknown":
-            return provider_name
+        """Return the wire format name ('anthropic' or 'openai') for tool/history serialization.
+
+        Logical provider names like 'openrouter' and 'ollama' both use the
+        OpenAI wire format, so they map to 'openai' here.
+        """
         class_name = type(self._provider).__name__.lower()
         if "anthropic" in class_name:
             return "anthropic"
@@ -319,8 +343,20 @@ class QueryEngine:
 
     def _fire_post_turn_hook(self) -> None:
         """Fire the post_turn_hook as a fire-and-forget asyncio task."""
-        if self._post_turn_hook is not None:
-            try:
-                asyncio.create_task(self._post_turn_hook(self._history.messages))
-            except RuntimeError:
-                pass
+        if self._post_turn_hook is None:
+            return
+        try:
+            task = asyncio.create_task(self._post_turn_hook(self._history.messages))
+            # Log exceptions from the fire-and-forget task instead of silencing them.
+            task.add_done_callback(self._on_post_turn_hook_done)
+        except RuntimeError:
+            # No running event loop — skip silently (e.g. called from sync context).
+            pass
+
+    @staticmethod
+    def _on_post_turn_hook_done(task: "asyncio.Task") -> None:  # type: ignore[name-defined]
+        import logging
+        if not task.cancelled() and task.exception() is not None:
+            logging.getLogger(__name__).error(
+                "post_turn_hook raised an exception: %s", task.exception(), exc_info=task.exception()
+            )

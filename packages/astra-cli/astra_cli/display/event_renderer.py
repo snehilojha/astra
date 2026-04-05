@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.live import Live
+from rich.spinner import Spinner
 from rich.text import Text
 
 from astra_node.core.events import (
@@ -16,6 +18,7 @@ from astra_node.core.events import (
 )
 
 _MAX_OUTPUT_CHARS = 500  # truncate long tool output in the terminal
+ACCENT = "#f97316"
 
 
 class EventRenderer:
@@ -33,6 +36,25 @@ class EventRenderer:
         self._total_input = 0
         self._total_output = 0
         self._swarm_text_buffers: dict[str, str] = {}  # worker_id -> buffered text
+        self._live: Live | None = None  # active spinner, if any
+
+    # ------------------------------------------------------------------
+    # Spinner control
+    # ------------------------------------------------------------------
+
+    def start_thinking(self) -> None:
+        """Show a subtle spinner while waiting for the first token."""
+        if self._live is not None:
+            return
+        spinner = Spinner("dots", style=f"dim {ACCENT}")
+        self._live = Live(spinner, console=self._console, transient=True, refresh_per_second=12)
+        self._live.start()
+
+    def stop_thinking(self) -> None:
+        """Stop and clear the spinner (called on first token or error)."""
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -68,9 +90,11 @@ class EventRenderer:
     # ------------------------------------------------------------------
 
     def _render_text_delta(self, event: TextDelta) -> None:
+        self.stop_thinking()
         self._console.print(event.text, end="", markup=False)
 
     def _render_tool_start(self, event: ToolStart) -> None:
+        self.stop_thinking()
         summary = _input_summary(event.tool_input)
         line = Text()
         line.append("⚙ running ", style="dim")
@@ -86,6 +110,8 @@ class EventRenderer:
             output = output[:_MAX_OUTPUT_CHARS] + " … (truncated)"
         style = "red" if event.is_error else "dim green"
         self._console.print(output, style=style)
+        # Restart spinner — engine is about to call the LLM again with tool results
+        self.start_thinking()
 
     def _render_agent_error(self, event: AgentError) -> None:
         line = Text()

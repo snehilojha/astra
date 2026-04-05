@@ -68,6 +68,14 @@ class GlobTool(BaseTool):
         if not root.is_absolute():
             root = ctx.cwd / root
 
+        # Prevent traversal outside cwd via ".." sequences.
+        root = root.resolve()
+        cwd_resolved = ctx.cwd.resolve()
+        if not root.is_relative_to(cwd_resolved):
+            return ToolResult.err(
+                f"Access denied: path is outside the working directory ({cwd_resolved})"
+            )
+
         if not root.exists():
             return ToolResult.err(f"Path not found: {root}")
 

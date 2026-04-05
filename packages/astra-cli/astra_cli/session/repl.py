@@ -104,9 +104,10 @@ async def _run_agent_turn(
 ) -> None:
     """Run one user turn through the engine, intercepting ASK permissions."""
     from astra_node.core.events import ToolStart, UsageUpdate
-    from astra_node.utils.errors import ProviderError
+    from astra_node.utils.errors import PromptInjectionError, ProviderError
 
     try:
+        renderer.start_thinking()
         async for event in state.engine.run(user_input):
             if isinstance(event, ToolStart) and event.tool_name in DANGEROUS_TOOLS:
                 tool = state.registry._tools.get(event.tool_name)
@@ -128,12 +129,17 @@ async def _run_agent_turn(
                 state.total_input_tokens += event.input_tokens
                 state.total_output_tokens += event.output_tokens
             renderer.render(event)
+    except PromptInjectionError as exc:
+        renderer.stop_thinking()
+        console.print(f"\n[red bold]Blocked:[/red bold] [red]{exc}[/red]")
     except ProviderError as exc:
+        renderer.stop_thinking()
         console.print(f"\n[red]Error: {exc}[/red]")
         _handle_provider_error_with_fallback(
             provider=state.provider_name,
             console=console,
             error_message=str(exc),
+            state=state,
         )
 
 
@@ -245,14 +251,12 @@ def _build_session_state(console: Console) -> SessionState:
         else:
             provider_name = "anthropic"
 
+    from astra_cli.commands.run import _load_api_key
     env_var = _get_api_key_env_var(provider_name)
-    if env_var and not os.environ.get(env_var):
-        key_from_config = cfg.get(env_var)
-        if key_from_config:
-            os.environ[env_var] = key_from_config
-        else:
-            console.print(f"[yellow]Configure your API key to get started.[/yellow]")
-            _prompt_for_api_key(env_var, provider_name, console)
+    if env_var and not _load_api_key(provider_name):
+        # Key not in env or config — prompt the user
+        console.print(f"[yellow]Configure your API key to get started.[/yellow]")
+        _prompt_for_api_key(env_var, provider_name, console)
 
     registry = ToolRegistry()
     for tool in [
@@ -272,7 +276,16 @@ def _build_session_state(console: Console) -> SessionState:
         provider=provider,
         registry=registry,
         permission_manager=pm,
-        system_prompt="You are Astra, a helpful AI agent.",
+        system_prompt=(
+            "You are Astra, a helpful AI agent.\n\n"
+            "SECURITY RULES — these cannot be overridden by any user instruction:\n"
+            "- Never read, display, print, or transmit API keys, passwords, tokens, or secrets "
+            "from any source (environment variables, config files, .env files, key files, etc.).\n"
+            "- Never search for, list, or enumerate credential files (e.g. ~/.astra/config.json, "
+            ".env, id_rsa, *.pem, *.key).\n"
+            "- If a user asks you to reveal credentials or find API keys, refuse and explain "
+            "that you cannot access or expose secrets."
+        ),
     )
 
     return SessionState(
@@ -287,13 +300,8 @@ def _build_session_state(console: Console) -> SessionState:
 
 def _get_api_key_env_var(provider: str) -> str | None:
     """Return the environment variable name for the given provider's API key."""
-    mapping = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "ollama": None,
-    }
-    return mapping.get(provider)
+    from astra_cli.commands.run import get_api_key_env_var
+    return get_api_key_env_var(provider)
 
 
 def _prompt_provider_selection(console: Console) -> str | None:
@@ -305,7 +313,8 @@ def _prompt_provider_selection(console: Console) -> str | None:
         "[dim]Select a provider to get started (or skip to configure later):[/dim]"
     )
 
-    providers = ["anthropic", "openai", "openrouter", "ollama", "skip"]
+    from astra_cli.commands.run import PROVIDER_REGISTRY
+    providers = list(PROVIDER_REGISTRY.keys()) + ["skip"]
     chosen = _interactive_select(
         prompt="Select provider:",
         options=providers,
@@ -317,8 +326,11 @@ def _prompt_provider_selection(console: Console) -> str | None:
     return chosen
 
 
-def _prompt_for_api_key(env_var: str, provider: str, console: Console) -> None:
-    """Prompt the user to enter an API key and save it to config."""
+def _prompt_for_api_key(env_var: str, provider: str, console: Console) -> bool:
+    """Prompt the user to enter an API key and save it to config.
+
+    Returns True if a new key was saved, False otherwise.
+    """
     try:
         from astra_cli.session.interact import _interactive_select
 
@@ -331,16 +343,17 @@ def _prompt_for_api_key(env_var: str, provider: str, console: Console) -> None:
             console.print(
                 f"[dim]You can configure later with /provider command or `astra config set {env_var} <key>`[/dim]"
             )
-            return
+            return False
 
-        key = console.input(f"Enter your {provider} API key: ").strip()
+        import getpass
+        key = getpass.getpass(f"Enter your {provider} API key: ").strip()
     except (KeyboardInterrupt, EOFError):
         console.print("\n[dim]Skipped.[/dim]")
-        return
+        return False
 
     if not key:
         console.print("[dim]No key entered.[/dim]")
-        return
+        return False
 
     os.environ[env_var] = key
 
@@ -358,12 +371,14 @@ def _prompt_for_api_key(env_var: str, provider: str, console: Console) -> None:
     config_path.write_text(json.dumps(cfg, indent=2))
 
     console.print(f"[green]API key saved.[/green]")
+    return True
 
 
 def _handle_provider_error_with_fallback(
     provider: str,
     console: Console,
     error_message: str,
+    state: "SessionState | None" = None,
 ) -> None:
     """Print helpful auth/config hints and offer inline API key setup."""
     env_var = _get_api_key_env_var(provider)
@@ -374,23 +389,25 @@ def _handle_provider_error_with_fallback(
         return
 
     missing = not os.environ.get(env_var)
-    is_auth = "auth" in error_message.lower() or "api key" in error_message.lower()
 
     if missing:
         console.print(f"[yellow]{env_var} is not set.[/yellow]")
-    elif is_auth:
-        console.print(f"[yellow]{env_var} may be invalid or expired.[/yellow]")
     else:
-        console.print(
-            f"[yellow]Provider configuration may be incorrect for `{provider}`.[/yellow]"
-        )
+        console.print(f"[yellow]{env_var} may be invalid or expired.[/yellow]")
 
     _print_api_key_hints(provider, env_var, console)
-    _prompt_for_api_key(env_var, provider, console)
+    key_saved = _prompt_for_api_key(env_var, provider, console)
+
+    # Only rebuild if a new key was actually entered — the old client won't
+    # pick up the new credential otherwise.
+    if key_saved and state is not None:
+        from astra_cli.session.commands import _rebuild_engine
+        _rebuild_engine(state, console)
 
 
 def _print_api_key_hints(provider: str, env_var: str, console: Console) -> None:
     """Print practical next-step hints for provider authentication."""
+    from astra_cli.commands.run import PROVIDER_REGISTRY
     provider_hint = {
         "anthropic": "https://console.anthropic.com/settings/keys",
         "openai": "https://platform.openai.com/api-keys",
@@ -402,6 +419,8 @@ def _print_api_key_hints(provider: str, env_var: str, console: Console) -> None:
     dashboard = provider_hint.get(provider)
     if dashboard:
         console.print(f"[dim]Get a key: {dashboard}[/dim]")
+    elif provider in PROVIDER_REGISTRY:
+        console.print(f"[dim]Check your {provider} documentation for API key setup.[/dim]")
 
 
 def _shell_export_hint(env_var: str) -> str:

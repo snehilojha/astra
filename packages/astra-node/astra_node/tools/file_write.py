@@ -44,6 +44,18 @@ class FileWriteTool(BaseTool):
         if not path.is_absolute():
             path = ctx.cwd / path
 
+        # Resolve ".." sequences before the file exists; use the parent dir for the
+        # boundary check because the file itself may not exist yet.
+        try:
+            resolved_parent = path.parent.resolve()
+        except OSError as exc:
+            return ToolResult.err(f"Invalid path: {exc}")
+        cwd_resolved = ctx.cwd.resolve()
+        if not resolved_parent.is_relative_to(cwd_resolved):
+            return ToolResult.err(
+                f"Access denied: path is outside the working directory ({cwd_resolved})"
+            )
+
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(input.content, encoding="utf-8")

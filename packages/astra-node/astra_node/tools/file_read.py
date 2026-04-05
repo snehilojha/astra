@@ -3,10 +3,26 @@
 Permission: ALWAYS_ALLOW (read-only, no side effects).
 """
 
+import fnmatch
 from pathlib import Path
 from pydantic import BaseModel, Field
 
 from astra_node.core.tool import BaseTool, PermissionLevel, ToolContext, ToolResult
+
+# Credential file patterns that must never be read by the agent.
+_BLOCKED_PATTERNS = (
+    "*.pem", "*.key", "*.p12", "*.pfx", "*.crt",
+    "id_rsa", "id_ecdsa", "id_ed25519", "id_dsa",
+    ".env", ".env.*",
+    "config.json",  # catches ~/.astra/config.json when outside cwd
+)
+# Directories whose contents should never be read.
+_BLOCKED_DIRS = (
+    Path.home() / ".ssh",
+    Path.home() / ".astra",
+    Path.home() / ".aws",
+    Path.home() / ".config" / "gcloud",
+)
 
 
 class FileReadInput(BaseModel):
@@ -51,6 +67,29 @@ class FileReadTool(BaseTool):
         path = Path(input.path)
         if not path.is_absolute():
             path = ctx.cwd / path
+
+        # Resolve symlinks / ".." to prevent path traversal outside cwd.
+        path = path.resolve()
+        cwd_resolved = ctx.cwd.resolve()
+        if not path.is_relative_to(cwd_resolved):
+            return ToolResult.err(
+                f"Access denied: path is outside the working directory ({cwd_resolved})"
+            )
+
+        # Block reads of known credential files regardless of location.
+        filename = path.name
+        if any(fnmatch.fnmatch(filename, pat) for pat in _BLOCKED_PATTERNS):
+            return ToolResult.err(
+                f"Access denied: reading credential files is not permitted ({filename})"
+            )
+        for blocked_dir in _BLOCKED_DIRS:
+            try:
+                if path.is_relative_to(blocked_dir.resolve()):
+                    return ToolResult.err(
+                        f"Access denied: reading from {blocked_dir} is not permitted"
+                    )
+            except ValueError:
+                pass
 
         if not path.exists():
             return ToolResult.err(f"File not found: {path}")

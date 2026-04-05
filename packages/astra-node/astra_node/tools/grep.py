@@ -74,6 +74,14 @@ class GrepTool(BaseTool):
         if not search_path.is_absolute():
             search_path = ctx.cwd / search_path
 
+        # Prevent traversal outside cwd via ".." sequences.
+        search_path = search_path.resolve()
+        cwd_resolved = ctx.cwd.resolve()
+        if not search_path.is_relative_to(cwd_resolved):
+            return ToolResult.err(
+                f"Access denied: path is outside the working directory ({cwd_resolved})"
+            )
+
         if not search_path.exists():
             return ToolResult.err(f"Path not found: {search_path}")
 

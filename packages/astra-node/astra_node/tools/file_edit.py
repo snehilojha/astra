@@ -47,6 +47,14 @@ class FileEditTool(BaseTool):
         if not path.is_absolute():
             path = ctx.cwd / path
 
+        # Resolve symlinks / ".." to prevent path traversal outside cwd.
+        path = path.resolve()
+        cwd_resolved = ctx.cwd.resolve()
+        if not path.is_relative_to(cwd_resolved):
+            return ToolResult.err(
+                f"Access denied: path is outside the working directory ({cwd_resolved})"
+            )
+
         if not path.exists():
             return ToolResult.err(f"File not found: {path}")
         if not path.is_file():

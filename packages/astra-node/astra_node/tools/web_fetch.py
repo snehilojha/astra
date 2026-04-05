@@ -3,9 +3,39 @@
 Permission: ASK_USER (makes an external network request).
 """
 
+import ipaddress
+import socket
+import urllib.parse
+
 from pydantic import BaseModel, Field
 
 from astra_node.core.tool import BaseTool, PermissionLevel, ToolContext, ToolResult
+
+_MAX_RESPONSE_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
+
+
+def _is_safe_url(url: str) -> tuple[bool, str]:
+    """Return (True, '') if the URL is safe to fetch, else (False, reason)."""
+    parsed = urllib.parse.urlparse(url)
+
+    if parsed.scheme not in ("http", "https"):
+        return False, f"Scheme '{parsed.scheme}' is not allowed; only http and https are permitted."
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL has no hostname."
+
+    # Resolve hostname to IP and block private/loopback ranges (SSRF prevention).
+    try:
+        ip_str = socket.getaddrinfo(hostname, None)[0][4][0]
+        ip = ipaddress.ip_address(ip_str)
+    except (socket.gaierror, ValueError):
+        return False, f"Could not resolve hostname: {hostname}"
+
+    if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved:
+        return False, f"Requests to private/internal addresses are not allowed ({ip})."
+
+    return True, ""
 
 
 class WebFetchInput(BaseModel):
@@ -47,13 +77,17 @@ class WebFetchTool(BaseTool):
         import urllib.request
         import urllib.error
 
+        safe, reason = _is_safe_url(input.url)
+        if not safe:
+            return ToolResult.err(f"Blocked URL: {reason}")
+
         try:
             req = urllib.request.Request(
                 input.url,
                 headers={"User-Agent": "astra-node/0.1 (agent framework)"},
             )
             with urllib.request.urlopen(req, timeout=15) as response:
-                raw = response.read()
+                raw = response.read(_MAX_RESPONSE_BYTES)
                 text = raw.decode("utf-8", errors="replace")
                 if len(text) > input.max_length:
                     text = (

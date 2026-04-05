@@ -3,10 +3,15 @@
 Permission: ASK_USER (mutating, potentially dangerous).
 """
 
+import os
+import shlex
 import subprocess
 from pydantic import BaseModel, Field, field_validator
 
 from astra_node.core.tool import BaseTool, PermissionLevel, ToolContext, ToolResult
+
+_MAX_TIMEOUT = 300  # hard cap: 5 minutes
+_IS_WINDOWS = os.name == "nt"
 
 
 class BashInput(BaseModel):
@@ -16,7 +21,8 @@ class BashInput(BaseModel):
     timeout: int = Field(
         default=30,
         ge=1,
-        description="Maximum seconds to wait for the command. Default 30.",
+        le=_MAX_TIMEOUT,
+        description=f"Maximum seconds to wait for the command. Default 30, max {_MAX_TIMEOUT}.",
     )
 
     @field_validator("timeout")
@@ -24,6 +30,8 @@ class BashInput(BaseModel):
     def validate_timeout(cls, v: int) -> int:
         if v < 1:
             raise ValueError("timeout must be at least 1 second")
+        if v > _MAX_TIMEOUT:
+            raise ValueError(f"timeout must not exceed {_MAX_TIMEOUT} seconds")
         return v
 
 
@@ -53,9 +61,19 @@ class BashTool(BaseTool):
             ToolResult with stdout on success, stderr on failure.
         """
         try:
+            # On Windows, shell=True is required for builtins (dir, cd, etc.),
+            # glob expansion, and piped commands. The injection risk is partially
+            # mitigated by the prompt_guard layer and the permission prompt.
+            # On POSIX, shell=False + shlex.split prevents metacharacter injection.
+            if _IS_WINDOWS:
+                args = input.command
+                use_shell = True
+            else:
+                args = shlex.split(input.command)
+                use_shell = False
             result = subprocess.run(
-                input.command,
-                shell=True,
+                args,
+                shell=use_shell,
                 capture_output=True,
                 text=True,
                 timeout=input.timeout,

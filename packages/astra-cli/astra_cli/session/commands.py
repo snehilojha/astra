@@ -141,26 +141,20 @@ def _cmd_tools(state, console: Console) -> CommandResult:
 
 
 def _cmd_provider(state, console: Console) -> CommandResult:
-    """Interactive provider selection with optional API key entry."""
+    """Interactive provider selection with optional API key entry, then model selection."""
     from astra_cli.session.interact import _interactive_select
+    from astra_cli.commands.run import PROVIDER_REGISTRY, get_api_key_env_var, _load_api_key
+    import os
 
-    providers = ["anthropic", "openai", "openrouter", "ollama"]
+    providers = list(PROVIDER_REGISTRY.keys())
     prompt = f"Select provider (current: {state.provider_name}):"
     chosen = _interactive_select(prompt=prompt, options=providers, console=console)
 
-    import os
-
-    key_map = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "ollama": None,
-    }
-    key_name = key_map.get(chosen)
-    if key_name and not os.environ.get(key_name):
-        api_key = console.input(
-            f"  [{ACCENT}]{key_name} not set. Enter API key:[/{ACCENT}] "
-        ).strip()
+    # Check if key already exists (env or config) — only prompt if missing
+    key_name = get_api_key_env_var(chosen)
+    if key_name and not _load_api_key(chosen):
+        import getpass
+        api_key = getpass.getpass(f"  {key_name} not set. Enter API key: ").strip()
         if api_key:
             os.environ[key_name] = api_key
             config_path = Path.home() / ".astra" / "config.json"
@@ -169,15 +163,33 @@ def _cmd_provider(state, console: Console) -> CommandResult:
             cfg[key_name] = api_key
             config_path.write_text(json.dumps(cfg, indent=2))
             console.print(f"  [{ACCENT}]Saved {key_name} to config.[/{ACCENT}]")
+        else:
+            console.print(f"  [yellow]No key entered — provider may not work until key is set.[/yellow]")
 
+    # After key is confirmed, offer model selection for the new provider
+    known = _KNOWN_MODELS.get(chosen, [])
+    options = known + [_CUSTOM_OPTION]
+    chosen_model = _interactive_select(
+        prompt=f"Select model ({chosen}):",
+        options=options,
+        console=console,
+    )
+    if chosen_model == _CUSTOM_OPTION:
+        chosen_model = console.input("  Model name: ").strip() or None
+
+    # Persist provider + model and rebuild
     state.provider_name = chosen
+    if chosen_model:
+        state.model = chosen_model
     config_path = Path.home() / ".astra" / "config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     cfg = _read_config_safe(config_path)
     cfg["ASTRA_PROVIDER"] = chosen
+    if chosen_model:
+        cfg["ASTRA_MODEL"] = chosen_model
     config_path.write_text(json.dumps(cfg, indent=2))
     _rebuild_engine(state, console)
-    console.print(f"  [{ACCENT}]Provider set to {chosen}.[/{ACCENT}]")
+    console.print(f"  [{ACCENT}]Provider: {chosen}  Model: {state.model or '(default)'}[/{ACCENT}]")
     return CommandResult(handled=True)
 
 
@@ -316,7 +328,7 @@ def _rebuild_engine(state, console: Console) -> None:
         provider=new_provider,
         registry=state.registry,
         permission_manager=state.permission_manager,
-        system_prompt="You are Astra, a helpful AI agent.",
+        system_prompt=state.engine._system_prompt,
     )
     # Transplant history so conversation context is preserved
     new_engine._history = old_history

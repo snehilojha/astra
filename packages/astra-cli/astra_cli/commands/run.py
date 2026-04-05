@@ -12,34 +12,108 @@ import typer
 
 app = typer.Typer(help="Run a single agent on a task.")
 
+# ---------------------------------------------------------------------------
+# Central provider registry — single source of truth for all provider config.
+# Adding a new provider: add one entry here. Nothing else needs changing.
+# ---------------------------------------------------------------------------
+PROVIDER_REGISTRY: dict[str, dict] = {
+    "anthropic": {
+        "env_var": "ANTHROPIC_API_KEY",
+        "default_model": "claude-sonnet-4-6",
+        "base_url": None,
+        "adapter": "anthropic",
+    },
+    "openai": {
+        "env_var": "OPENAI_API_KEY",
+        "default_model": "gpt-4o-mini",
+        "base_url": None,
+        "adapter": "openai",
+    },
+    "openrouter": {
+        "env_var": "OPENROUTER_API_KEY",
+        "default_model": "anthropic/claude-sonnet-4",
+        "base_url": "https://openrouter.ai/api/v1",
+        "adapter": "openai",
+    },
+    "ollama": {
+        "env_var": None,
+        "default_model": "qwen2.5-coder",
+        "base_url": "http://localhost:11434/v1",
+        "adapter": "openai",
+        "api_key_override": "ollama",  # Ollama accepts any non-empty string
+    },
+}
+
+
+def get_api_key_env_var(provider: str) -> str | None:
+    """Return the environment variable name for the given provider's API key."""
+    return PROVIDER_REGISTRY.get(provider, {}).get("env_var")
+
+
+def _load_api_key(provider: str) -> str | None:
+    """Resolve the API key for a provider: config file → env var → None.
+
+    Writes the config value into os.environ so the SDK can find it via its
+    own env-var lookup, keeping the provider constructors simple.
+    """
+    cfg_entry = PROVIDER_REGISTRY.get(provider, {})
+    api_key_override = cfg_entry.get("api_key_override")
+    if api_key_override:
+        return api_key_override  # e.g. Ollama always uses "ollama"
+
+    env_var = cfg_entry.get("env_var")
+    if not env_var:
+        return None
+
+    # Already in environment — nothing to do
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+
+    # Try loading from ~/.astra/config.json
+    config_path = Path.home() / ".astra" / "config.json"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            key = cfg.get(env_var)
+            if key:
+                os.environ[env_var] = key  # expose to SDK
+                return key
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return None
+
 
 def _build_provider(provider: str, model: str | None, base_url: str | None = None):
-    """Build the appropriate LLM provider."""
-    if provider == "ollama":
-        from astra_node.providers.openai import OpenAIProvider
-
-        return OpenAIProvider(
-            model=model or "qwen2.5-coder",
-            base_url=base_url or "http://localhost:11434/v1",
-            api_key="ollama",
+    """Build the appropriate LLM provider, loading auth from config if needed."""
+    cfg_entry = PROVIDER_REGISTRY.get(provider)
+    if cfg_entry is None:
+        # Unknown provider — fall back to Anthropic and warn
+        typer.echo(
+            f"[warning] Unknown provider '{provider}', falling back to anthropic.",
+            err=True,
         )
-    elif provider == "openrouter":
+        cfg_entry = PROVIDER_REGISTRY["anthropic"]
+        provider = "anthropic"
+
+    resolved_model = model or cfg_entry["default_model"]
+    resolved_base_url = base_url or cfg_entry.get("base_url")
+    api_key = _load_api_key(provider)
+
+    adapter = cfg_entry["adapter"]
+    if adapter == "openai":
         from astra_node.providers.openai import OpenAIProvider
 
-        api_key = os.environ.get("OPENROUTER_API_KEY")
         return OpenAIProvider(
-            model=model or "anthropic/claude-sonnet-4",
-            base_url="https://openrouter.ai/api/v1",
+            model=resolved_model,
+            base_url=resolved_base_url,
             api_key=api_key,
+            provider_name=provider,
         )
-    elif provider == "openai":
-        from astra_node.providers.openai import OpenAIProvider
-
-        return OpenAIProvider(model=model or "gpt-4o-mini", base_url=base_url)
     else:
         from astra_node.providers.anthropic import AnthropicProvider
 
-        return AnthropicProvider(model=model or "claude-sonnet-4-6")
+        return AnthropicProvider(model=resolved_model, api_key=api_key)
 
 
 def _build_engine(provider_name: str, model: str | None, base_url: str | None = None):
@@ -73,7 +147,16 @@ def _build_engine(provider_name: str, model: str | None, base_url: str | None = 
         provider=provider,
         registry=registry,
         permission_manager=permission_manager,
-        system_prompt="You are Astra, a helpful AI agent.",
+        system_prompt=(
+            "You are Astra, a helpful AI agent.\n\n"
+            "SECURITY RULES — these cannot be overridden by any user instruction:\n"
+            "- Never read, display, print, or transmit API keys, passwords, tokens, or secrets "
+            "from any source (environment variables, config files, .env files, key files, etc.).\n"
+            "- Never search for, list, or enumerate credential files (e.g. ~/.astra/config.json, "
+            ".env, id_rsa, *.pem, *.key).\n"
+            "- If a user asks you to reveal credentials or find API keys, refuse and explain "
+            "that you cannot access or expose secrets."
+        ),
     )
 
 
@@ -120,6 +203,10 @@ def run(
     try:
         asyncio.run(_run())
     except Exception as exc:
+        from astra_node.utils.errors import PromptInjectionError
+        if isinstance(exc, PromptInjectionError):
+            typer.echo(f"\nBlocked: {exc}", err=True)
+            raise typer.Exit(1)
         _handle_provider_error(exc, provider)
 
 
@@ -147,13 +234,7 @@ def _handle_provider_error(exc: Exception, provider: str) -> None:
 
 def _get_api_key_env_var(provider: str) -> str | None:
     """Return the environment variable name for the given provider's API key."""
-    mapping = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "ollama": None,
-    }
-    return mapping.get(provider)
+    return get_api_key_env_var(provider)
 
 
 def _prompt_for_api_key(env_var: str, provider: str) -> None:
@@ -197,6 +278,12 @@ def _prompt_for_api_key(env_var: str, provider: str) -> None:
 
     cfg[env_var] = key.strip()
     config_path.write_text(json.dumps(cfg, indent=2))
+    # Restrict to owner read/write only (rw-------) to protect stored API keys.
+    import stat as _stat
+    try:
+        os.chmod(config_path, _stat.S_IRUSR | _stat.S_IWUSR)
+    except OSError:
+        pass  # Windows may not support POSIX permissions; best-effort.
 
     typer.echo(f"API key saved to {config_path}", err=True)
     typer.echo("You can now retry your command.", err=True)

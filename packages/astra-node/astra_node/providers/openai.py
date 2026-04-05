@@ -31,6 +31,7 @@ class OpenAIProvider(LLMProvider):
         model: str = "gpt-4o",
         max_tokens: int = 8096,
         base_url: str | None = None,
+        provider_name: str | None = None,
     ) -> None:
         """Initialise the OpenAI adapter.
 
@@ -41,7 +42,11 @@ class OpenAIProvider(LLMProvider):
             max_tokens: Maximum tokens in the completion response.
             base_url: Override the API base URL. Use for Ollama or other
                       OpenAI-compatible servers (e.g. "http://localhost:11434/v1").
+            provider_name: Override the provider name (e.g. "openrouter", "ollama").
+                           Used in error messages and provider detection.
         """
+        if provider_name:
+            self.provider_name = provider_name
         self._model = model
         self._max_tokens = max_tokens
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -174,22 +179,22 @@ class OpenAIProvider(LLMProvider):
         except openai.AuthenticationError as exc:
             self._last_response = None
             raise ProviderError(
-                "Authentication failed — check your OPENAI_API_KEY",
-                provider="openai",
+                f"Authentication failed for {self.provider_name}",
+                provider=self.provider_name,
                 cause=exc,
             ) from exc
         except openai.APIConnectionError as exc:
             self._last_response = None
             raise ProviderError(
-                f"Network error connecting to OpenAI API: {exc}",
-                provider="openai",
+                f"Network error connecting to {self.provider_name} API: {exc}",
+                provider=self.provider_name,
                 cause=exc,
             ) from exc
         except openai.APIStatusError as exc:
             self._last_response = None
             raise ProviderError(
-                f"OpenAI API error {exc.status_code}: {exc.message}",
-                provider="openai",
+                f"{self.provider_name} API error {exc.status_code}: {exc.message}",
+                provider=self.provider_name,
                 cause=exc,
             ) from exc
 

@@ -21,8 +21,16 @@ def _load_config() -> dict:
 
 
 def _save_config(cfg: dict) -> None:
+    import os
+    import stat
+
     _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    # Restrict to owner read/write only (rw-------) to protect stored API keys.
+    try:
+        os.chmod(_CONFIG_PATH, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass  # Windows may not support POSIX permissions; best-effort.
 
 
 @app.command("set")

@@ -56,3 +56,11 @@ class PermissionDeniedError(AgentFrameworkError):
         self.tool_name = tool_name
         self.tool_input = tool_input or {}
         super().__init__(f"Permission denied for tool '{tool_name}'")
+
+
+class PromptInjectionError(AgentFrameworkError):
+    """User input was blocked due to a suspected prompt injection attempt.
+
+    This is FATAL for the current turn — the message is rejected before it
+    reaches the LLM. The caller should surface the error to the user.
+    """

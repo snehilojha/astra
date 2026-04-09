@@ -67,11 +67,21 @@ def start() -> None:
 
 async def _repl_loop(state: SessionState, console: Console) -> None:
     """Main async REPL loop."""
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.formatted_text import HTML
+    from prompt_toolkit.styles import Style
+
+    pt_style = Style.from_dict({
+        "prompt": "#f97316 bold",
+        "bottom-toolbar": "noreverse bg: fg:default",
+    })
+    pt_session: PromptSession[str] = PromptSession()
+
     renderer = EventRenderer(console=console)
 
     while True:
         try:
-            raw = await _read_input(state)
+            raw = await _read_input(state, pt_session, pt_style)
         except (EOFError, KeyboardInterrupt):
             console.print(f"\n[{ACCENT}]Goodbye.[/{ACCENT}]")
             break
@@ -90,6 +100,7 @@ async def _repl_loop(state: SessionState, console: Console) -> None:
         # Agent turn
         state.turn_count += 1
         await _run_agent_turn(raw, state, renderer, console)
+        console.rule(style="dim")
 
         # Auto-compaction
         if state.turn_count % COMPACTION_TURN_THRESHOLD == 0:
@@ -183,13 +194,14 @@ def _prompt_permission(
 
 
 def _ask_permission(console: Console) -> str:
-    """Prompt [yes/no/always] with arrow key selection and return the raw answer."""
+    """Prompt [yes/no/always] and return the raw answer."""
     try:
-        return _interactive_select(
-            prompt="Allow?",
-            options=["yes", "no", "always"],
-            console=console,
-        )
+        answer = console.input(f"  [{ACCENT}]Allow? [yes/no/always]:[/{ACCENT}] ").strip().lower()
+        if answer in ("yes", "y"):
+            return "yes"
+        if answer in ("always", "a"):
+            return "always"
+        return "no"
     except (EOFError, KeyboardInterrupt):
         return "no"
 
@@ -197,25 +209,45 @@ def _ask_permission(console: Console) -> str:
 def _toolbar_text(state: SessionState) -> str:
     """Return prompt_toolkit HTML string for the bottom status toolbar."""
     model = state.model or "(default)"
+    cost = f"${_estimate_cost(state):.4f}"
     return (
-        f" <style fg='#f97316'>{state.provider_name}</style>"
-        f" <style fg='#666'>·</style>"
-        f" <style fg='#f97316'>{model}</style>"
-        f" <style fg='#666'>·</style>"
-        f" <style fg='#888'>↑{state.total_input_tokens} ↓{state.total_output_tokens}</style>"
-        f" <style fg='#666'>·</style>"
-        f" <style fg='#888'>turn {state.turn_count}</style> "
+        f"<style bg='' fg='#f97316'> {state.provider_name} </style>"
+        f"<style bg='' fg='#555'>·</style>"
+        f"<style bg='' fg='#f97316'> {model} </style>"
+        f"<style bg='' fg='#555'>·</style>"
+        f"<style bg='' fg='white'> ↑{state.total_input_tokens} ↓{state.total_output_tokens} </style>"
+        f"<style bg='' fg='#555'>·</style>"
+        f"<style bg='' fg='white'> {cost} </style>"
+        f"<style bg='' fg='#555'>·</style>"
+        f"<style bg='' fg='white'> turn {state.turn_count} </style>"
     )
 
 
-async def _read_input(state: SessionState) -> str:
-    """Read one line of user input via prompt-toolkit (async) with live status bar."""
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.formatted_text import HTML
-    from prompt_toolkit.styles import Style
+def _estimate_cost(state: SessionState) -> float:
+    """Rough cost estimate based on provider/model token usage."""
+    # Prices per 1M tokens (input, output) — approximate
+    _PRICING: dict[str, tuple[float, float]] = {
+        "anthropic/claude-opus-4":    (15.0, 75.0),
+        "anthropic/claude-sonnet-4":  (3.0,  15.0),
+        "anthropic/claude-haiku-4-5": (0.8,   4.0),
+        "claude-opus-4-6":            (15.0, 75.0),
+        "claude-sonnet-4-6":          (3.0,  15.0),
+        "claude-haiku-4-5":           (0.8,   4.0),
+        "gpt-4o":                     (2.5,  10.0),
+        "gpt-4o-mini":                (0.15,  0.6),
+        "openai/gpt-4o":              (2.5,  10.0),
+        "openai/o1":                  (15.0, 60.0),
+        "google/gemini-2.0-flash":    (0.1,   0.4),
+    }
+    model = state.model or ""
+    price_in, price_out = _PRICING.get(model, (3.0, 15.0))  # default to sonnet pricing
+    return (state.total_input_tokens * price_in + state.total_output_tokens * price_out) / 1_000_000
 
-    style = Style.from_dict({"prompt": "#f97316 bold"})
-    session: PromptSession[str] = PromptSession()
+
+async def _read_input(state: SessionState, session, style) -> str:
+    """Read one line of user input via prompt-toolkit (async) with live status bar."""
+    from prompt_toolkit.formatted_text import HTML
+
     return await session.prompt_async(
         "> ",
         style=style,

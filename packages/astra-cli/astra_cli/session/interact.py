@@ -35,16 +35,31 @@ def _interactive_select(
     from prompt_toolkit.styles import Style
 
     selected = 0
+    MAX_VISIBLE = 8
+    scroll_offset = 0
 
     def get_menu_text():
+        nonlocal scroll_offset
+        # Keep selected item in the visible window
+        if selected < scroll_offset:
+            scroll_offset = selected
+        elif selected >= scroll_offset + MAX_VISIBLE:
+            scroll_offset = selected - MAX_VISIBLE + 1
+
+        visible = options[scroll_offset:scroll_offset + MAX_VISIBLE]
         lines = []
-        lines.append(("class:prompt-text", f"  {prompt} "))
-        for i, opt in enumerate(options):
-            if i == selected:
-                lines.append(("", f" ▶ {opt} "))
+        lines.append(("class:prompt-text", f"  {prompt}\n"))
+        if scroll_offset > 0:
+            lines.append(("class:dim", "   ↑ more\n"))
+        for i, opt in enumerate(visible):
+            abs_i = i + scroll_offset
+            if abs_i == selected:
+                lines.append(("", f" ▶ {opt}\n"))
             else:
-                lines.append(("class:dim", f"   {opt} "))
-        lines.append(("", "\n  (use arrow keys, enter to select)"))
+                lines.append(("class:dim", f"   {opt}\n"))
+        if scroll_offset + MAX_VISIBLE < len(options):
+            lines.append(("class:dim", "   ↓ more\n"))
+        lines.append(("class:dim", "  (↑↓ to navigate, enter to select)"))
         return lines
 
     kb = KeyBindings()

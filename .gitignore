@@ -1,5 +1,6 @@
 __pycache__/
 __pycache__
+__init__.py
 *.log
 .env
 claude-code-main/
@@ -9,4 +10,4 @@ context.md
 docs/
 .superpowers/
 ASTRA.md
-.pytest_cache
+.pytest_cached

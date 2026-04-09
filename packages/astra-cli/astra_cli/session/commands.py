@@ -196,8 +196,19 @@ def _cmd_provider(state, console: Console) -> CommandResult:
 def _cmd_model(state, console: Console) -> CommandResult:
     from astra_cli.session.interact import _interactive_select
 
+    config_path = Path.home() / ".astra" / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = _read_config_safe(config_path)
+
+    # Recently used models for this provider (most recent first)
+    recent_key = f"ASTRA_RECENT_MODELS_{state.provider_name.upper()}"
+    recent: list[str] = cfg.get(recent_key, [])
+
+    # Build menu: recent first, then known defaults not already listed
     known = _KNOWN_MODELS.get(state.provider_name, [])
-    options = known + [_CUSTOM_OPTION]
+    seen = set(recent)
+    extras = [m for m in known if m not in seen]
+    options = recent + extras + [_CUSTOM_OPTION]
 
     chosen = _interactive_select(
         prompt=f"Select model ({state.provider_name}):",
@@ -211,11 +222,13 @@ def _cmd_model(state, console: Console) -> CommandResult:
             console.print("[dim]Model unchanged.[/dim]")
             return CommandResult(handled=True)
 
+    # Update recent list: move chosen to front, cap at 10
+    recent = [chosen] + [m for m in recent if m != chosen]
+    recent = recent[:10]
+
     state.model = chosen
-    config_path = Path.home() / ".astra" / "config.json"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg = _read_config_safe(config_path)
     cfg["ASTRA_MODEL"] = chosen
+    cfg[recent_key] = recent
     config_path.write_text(json.dumps(cfg, indent=2))
 
     _rebuild_engine(state, console)
@@ -225,6 +238,7 @@ def _cmd_model(state, console: Console) -> CommandResult:
 
 def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
     import asyncio
+    import os
     import threading
     from astra_cli.display.event_renderer import EventRenderer
 
@@ -250,64 +264,43 @@ def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
         console.print("[dim]Cancelled.[/dim]")
         return CommandResult(handled=True)
 
+    cwd = os.getcwd()
+    full_task = f"{task}\n\nWorking directory: {cwd}\nStart by exploring the codebase from that directory."
+
     renderer = EventRenderer(console=console)
 
+    stop_event = threading.Event()
+
     async def _run_swarm() -> None:
-        async for event in coordinator.run(task):
+        renderer.start_thinking()
+        async for event in coordinator.run(full_task):
+            if stop_event.is_set():
+                break
             renderer.render(event)
+        renderer.stop_thinking()
 
     def _run_in_thread() -> None:
         asyncio.run(_run_swarm())
 
     try:
-        loop = asyncio.get_running_loop()
-        thread = threading.Thread(target=_run_in_thread)
+        asyncio.get_running_loop()
+        thread = threading.Thread(target=_run_in_thread, daemon=True)
         thread.start()
-        thread.join()
-    except RuntimeError:
-        asyncio.run(_run_swarm())
-    return CommandResult(handled=True)
-
-    yaml_path = Path(arg).expanduser()
-    if not yaml_path.exists():
-        console.print(f"[red]File not found:[/red] {yaml_path}")
-        return CommandResult(handled=True)
-
-    try:
-        from astra_swarm.swarm_loader import load_swarm_from_yaml
-
-        _cfg, coordinator = load_swarm_from_yaml(yaml_path)
-    except Exception as exc:
-        console.print(f"[red]Failed to load swarm:[/red] {exc}")
-        return CommandResult(handled=True)
-
-    task = console.input(f"  [{ACCENT}]Task for swarm:[/{ACCENT}] ").strip()
-    if not task:
-        console.print("[dim]Cancelled.[/dim]")
-        return CommandResult(handled=True)
-
-    renderer = EventRenderer(console=console)
-
-    async def _run_swarm() -> None:
-        async for event in coordinator.run(task):
-            renderer.render(event)
-
-    try:
-        loop = asyncio.get_running_loop()
-        import nest_asyncio
-
-        nest_asyncio.apply(loop)
-        asyncio.run(_run_swarm())
-    except RuntimeError:
-        asyncio.run(_run_swarm())
-    except ImportError:
         try:
-            import asyncio as _asyncio
-
-            _asyncio.run(_run_swarm())
-        except RuntimeError as e:
-            console.print(f"[red]Cannot run swarm from async context:[/red] {e}")
-            console.print("[dim]Install nest_asyncio: pip install nest_asyncio[/dim]")
+            while thread.is_alive():
+                thread.join(timeout=0.2)
+        except KeyboardInterrupt:
+            stop_event.set()
+            renderer.stop_thinking()
+            console.print(f"\n[{ACCENT}]Swarm interrupted.[/{ACCENT}]")
+            thread.join(timeout=5)
+    except RuntimeError:
+        try:
+            asyncio.run(_run_swarm())
+        except KeyboardInterrupt:
+            stop_event.set()
+            renderer.stop_thinking()
+            console.print(f"\n[{ACCENT}]Swarm interrupted.[/{ACCENT}]")
     return CommandResult(handled=True)
 
 

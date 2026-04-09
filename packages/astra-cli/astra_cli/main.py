@@ -19,7 +19,7 @@ def _load_config_into_env() -> None:
     except (json.JSONDecodeError, OSError):
         return
     for key, value in cfg.items():
-        if key not in os.environ:
+        if isinstance(value, str) and key not in os.environ:
             os.environ[key] = value
 
 

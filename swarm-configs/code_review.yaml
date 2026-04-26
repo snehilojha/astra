@@ -2,8 +2,9 @@ name: code_review
 strategy: hierarchical
 coordinator:
   id: reviewer_lead
-  model: qwen/qwen3.6-plus:free
+  model: openai/gpt-5-nano
   provider: openrouter
+  allowed_tools: [file_read, glob, grep]
   system_prompt: |
     You are a code review coordinator. Break down the review task and assign
     subtasks to workers using the format: WORKER_ID: description of what to review.
@@ -12,7 +13,7 @@ coordinator:
   max_turns: 10
 workers:
   - id: security_reviewer
-    model: qwen/qwen3.6-plus:free
+    model: openai/gpt-5-nano
     provider: openrouter
     allowed_tools: [file_read, grep]
     system_prompt: |
@@ -21,7 +22,7 @@ workers:
       Report findings with file, line number, severity (HIGH/MEDIUM/LOW), and fix.
     max_turns: 15
   - id: logic_reviewer
-    model: qwen/qwen3.6-plus:free
+    model: openai/gpt-5-nano
     provider: openrouter
     allowed_tools: [file_read, grep, bash]
     system_prompt: |
@@ -30,7 +31,7 @@ workers:
       Report findings with file, line number, and suggested correction.
     max_turns: 15
   - id: style_reviewer
-    model: qwen/qwen3.6-plus:free
+    model: openai/gpt-5-nano
     provider: openrouter
     allowed_tools: [file_read]
     system_prompt: |

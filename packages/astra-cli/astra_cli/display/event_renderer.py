@@ -157,6 +157,12 @@ class EventRenderer:
 
     def _render_turn_end(self, event: TurnEnd) -> None:
         self._flush_response_buffer()
+        self._console.rule(style="dim")
+        if self._total_input or self._total_output:
+            self._console.print(
+                f"tokens: {self._total_input} in / {self._total_output} out",
+                style="dim",
+            )
 
     def _accumulate_usage(self, event: UsageUpdate) -> None:
         self._total_input += event.input_tokens

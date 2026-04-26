@@ -4,6 +4,7 @@ coordinator:
   id: refactor_lead
   model: anthropic/claude-opus-4
   provider: openrouter
+  allowed_tools: [file_read, glob, grep]
   system_prompt: |
     You are a refactoring coordinator. Analyse the codebase, create a refactoring
     plan, and assign specific files or modules to workers using format:

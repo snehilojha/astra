@@ -11,3 +11,4 @@ docs/
 .superpowers/
 ASTRA.md
 .pytest_cached
+.claude/

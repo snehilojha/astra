@@ -47,12 +47,14 @@ class TestTextDelta:
     def test_renders_text(self):
         renderer, buf = make_renderer()
         renderer.render(TextDelta(text="hello world"))
+        renderer.render(TurnEnd())  # flush buffer
         assert "hello world" in captured(buf)
 
     def test_streamed_text_no_newline_between_chunks(self):
         renderer, buf = make_renderer()
         renderer.render(TextDelta(text="foo"))
         renderer.render(TextDelta(text="bar"))
+        renderer.render(TurnEnd())  # flush buffer
         out = captured(buf)
         assert "foo" in out
         assert "bar" in out
@@ -161,8 +163,8 @@ class TestSwarmEvent:
         from astra_swarm.swarm import SwarmEvent
 
         renderer, buf = make_renderer()
-        event = SwarmEvent(worker_id="worker_1", inner_type="text_delta", data={"text": "hi"})
-        renderer.render(event)
+        renderer.render(SwarmEvent(worker_id="worker_1", inner_type="text_delta", data={"text": "hi"}))
+        renderer.render(SwarmEvent(worker_id="worker_1", inner_type="turn_end", data={}))  # flush buffer
         out = captured(buf)
         assert "worker_1" in out
         assert "hi" in out

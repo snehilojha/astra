@@ -182,7 +182,7 @@ class SwarmCoordinator:
         worker_registry = (
             self._registry.filter(worker_cfg.allowed_tools)
             if worker_cfg.allowed_tools
-            else ToolRegistry()
+            else self._registry
         )
         return QueryEngine(
             provider=worker_cfg.provider,

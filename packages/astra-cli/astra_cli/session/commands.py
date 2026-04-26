@@ -102,7 +102,7 @@ def _cmd_exit(console: Console) -> CommandResult:
 
 
 def _cmd_clear(state, console: Console) -> CommandResult:
-    state.engine._history.messages.clear()
+    state.engine._history._messages.clear()
     state.turn_count = 0
     console.print(f"[{ACCENT}]Conversation history cleared.[/{ACCENT}]")
     return CommandResult(handled=True)
@@ -254,7 +254,7 @@ def _cmd_swarm(arg: str, state, console: Console) -> CommandResult:
     try:
         from astra_swarm.swarm_loader import load_swarm_from_yaml
 
-        _cfg, coordinator = load_swarm_from_yaml(yaml_path)
+        _cfg, coordinator = load_swarm_from_yaml(yaml_path, registry=state.registry)
     except Exception as exc:
         console.print(f"[red]Failed to load swarm:[/red] {exc}")
         return CommandResult(handled=True)

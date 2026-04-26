@@ -162,6 +162,7 @@ def test_repl_start_exits_on_exit_command():
         patch("astra_cli.session.repl._read_input", side_effect=["/exit"]),
         patch("astra_cli.session.banner.print_banner"),
         patch("astra_cli.session.repl._build_session_state") as mock_state,
+        patch("prompt_toolkit.PromptSession"),
     ):
         mock_st = MagicMock()
         mock_st.engine = MagicMock()
@@ -190,6 +191,8 @@ def test_repl_forwards_non_slash_to_agent():
         patch("astra_cli.session.banner.print_banner"),
         patch("astra_cli.session.repl._build_session_state") as mock_state,
         patch("astra_cli.display.event_renderer.EventRenderer.render"),
+        patch("prompt_toolkit.PromptSession"),
+        patch("astra_node.core.compaction.CompactionEngine.should_compact", return_value=False),
     ):
         mock_engine = MagicMock()
         mock_engine.run = fake_run
